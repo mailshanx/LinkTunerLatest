@@ -1,0 +1,39 @@
+package org.arl.modem.linktuner;
+
+public class BanditParams {
+	protected double alpha;
+	protected double beta;
+	protected double gittinsIndex;
+	protected double normalizedIndex;
+	
+	protected BanditParams(){
+		this.alpha=1;
+		this.beta=1;
+		this.gittinsIndex=0.61452;
+		this.normalizedIndex=0;
+	}
+
+	public BanditParams(double alpha, double beta, double gittinsIndex,
+			double normalizedIndex) {
+		super();
+		this.alpha = alpha;
+		this.beta = beta;
+		this.gittinsIndex = gittinsIndex;
+		this.normalizedIndex = normalizedIndex;
+	}
+	
+//	protected double getAlpha(){
+//		return alpha;
+//	}
+//	protected double getBeta(){
+//		return beta;
+//	}
+//	protected double getGittinsIndex(){
+//		return gittinsIndex;
+//	}
+//	protected double getNormIndex(){
+//		return normalizedIndex;
+//	}
+	
+	
+}

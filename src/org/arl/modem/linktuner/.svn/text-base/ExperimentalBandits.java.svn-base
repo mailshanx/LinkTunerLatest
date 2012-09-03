@@ -1,0 +1,518 @@
+package org.arl.modem.linktuner;
+
+import jade.util.Logger;
+import jade.util.leap.Set;
+
+import java.lang.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.ListIterator;
+ //ss
+public class ExperimentalBandits {
+									//	MTYPE     DMODE	  MPSK      NC      NP      NZ    PKTLEN   FEC  
+	public  static int brigands[][]=	 {{1,		1,		1,		4,		7,		0,		1,		3},    //Coherent,	freq,	QPSK,	Nc=1024,	Np=512,		Nz(=5),		Pktlen=48,		full coding. 	duration=?				
+										  {1,		1,		1,		3,		6,		0,		1,		3},	   //Coherent,	freq,	QPSK,	Nc=512, 	Np=256,		Nz(=5),		Pktlen=48,		full coding.	duration=?
+										  {1,		0,		1,		0,		3,		0,		1,		3},	   //Coherent,	time,	QPSK,	Nc=64,		Np=32,		Nz(=5),		Pktlen=48,		full coding.	duration=?	
+										  {1,		0,		1,		1,		4,		0,		1,		3},	   //Coherent,	time,	QPSK,	Nc=128,		Np=64,		Nz(=5),		Pktlen=48,		full coding.	duration=?
+										
+										  {1,		1,		0,		4,		7,		0,		1,		3},    //Coherent,	freq,	BPSK,	Nc=1024,	Np=512,		Nz(=5),		Pktlen=48,		full coding. 	duration=?				
+										  {1,		1,		0,		3,		6,		0,		1,		3},	   //Coherent,	freq,	BPSK,	Nc=512, 	Np=256,		Nz(=5),		Pktlen=48,		full coding.	duration=?
+										  {1,		0,		0,		0,		3,		0,		1,		3},	   //Coherent,	time,	BPSK,	Nc=64,		Np=32,		Nz(=5),		Pktlen=48,		full coding.	duration=?	
+										  {1,		0,		0,		1,		4,		0,		1,		3},	   //Coherent,	time,	BPSK,	Nc=128,		Np=64,		Nz(=5),		Pktlen=48,		full coding.	duration=?
+
+										  };
+	//check if these are valid
+	public final static double relativeDataRates[]={1.39899,   1.34199,   1.38303,   1.35033,
+													0.33333,   1.00000,   0.63636,   0.27729};
+	
+	public static boolean EXPERIMENT_COMPLETED=false;
+	public static boolean LOCAL_EXPERIMENT_COMPLETED=false;
+	
+	private static int banditID=0;
+	private static int banditCurrent;
+	private static int banditPrev;
+	private static int playCount=0;
+	private static int bandit_settle_factor=4;  //No of times you need to play the same arm consecutively 
+												//(and successfully) to declare that the bandit 
+												//has "settled".
+	
+	private static int bandit_flutter_factor=10;//If the bandit hasn't settled
+	
+	private static Integer NpUpperLim;
+	private static Integer NpLowerLim;
+	
+	private static SmartBoy smart_boy;
+	private static Logger log;
+	private static ParamSetter param_setter;
+	private static Exploit exploit;
+	private static BanditIndices bandit_indices;
+	protected static BanditParams[] bandit_params;
+	protected static TweakRecord tweak_record;
+	
+	protected static List<List<LocalPlayRecord>> grand_play_history;
+	protected static List<LocalPlayRecord> local_play_history;
+	protected static ArrayList<TweakRecord> tweak_log;
+	
+	public final static int INITIATE_EXPERIMENTS=999;
+//	public final static int SET_SCHEME_REQUEST_COMPLETED=1000;
+	public final static int TRIGGER_TEST_PKT_TRAINS=1001;
+	public static final int UPDATE_RECENT_STATS=1002;
+	
+	protected ExperimentalBandits(SmartBoy _smart_boy, ParamSetter _param_setter, Exploit _exploit, Logger _log){
+		
+		this.param_setter=_param_setter;
+		this.smart_boy=_smart_boy;
+		this.exploit=_exploit;
+		this.log=_log;
+		if(brigands.length!=relativeDataRates.length){
+			System.out.println("lengths of brigands and relativeDataRates don't match");
+		}
+		grand_play_history = new ArrayList<List<LocalPlayRecord>>();
+		local_play_history = new ArrayList<LocalPlayRecord>();
+		tweak_log = new ArrayList<TweakRecord>();
+		genBrigandSet(brigands[0]);
+		resetLocalBandits();
+				
+		System.out.println("Experimental bandits initialized");
+	}
+	public static void runExperiment(int msgType){
+		switch (msgType) {
+		case INITIATE_EXPERIMENTS:
+			//log.fine("in runExperiment : INITIATE_EXPERIMENTS");
+			banditID=(int)findMaxValueIndex(bandit_params)[1];
+			banditCurrent=banditID;
+			if (playCount==0) {
+				param_setter.currentSetSchemeParam=brigands[banditID];
+				//crashes when you set param_setter.currentSetSchemeParam=brigands[2]. investigate why. perhaps its an invalid scheme???
+				param_setter.setSchemeRequest(param_setter.currentSetSchemeParam, true);
+				banditPrev=banditCurrent;
+				log.fine("banditID = "+banditID+", index = "+findMaxValueIndex(bandit_params)[0]);
+				break;
+			}else if (banditCurrent!=banditPrev) {
+				param_setter.currentSetSchemeParam=brigands[banditID];
+				//crashes when you set param_setter.currentSetSchemeParam=brigands[2]. investigate why. perhaps its an invalid scheme???
+				param_setter.setSchemeRequest(param_setter.currentSetSchemeParam, true);
+				banditPrev=banditCurrent;
+				log.fine("banditID = "+banditID+", index = "+findMaxValueIndex(bandit_params)[0]+" playCount = "+playCount);				
+			}else {
+				//current recommendation is same as previous, so we can proceed straight to play
+				log.fine("banditID = "+banditID+", index = "+findMaxValueIndex(bandit_params)[0]+" playCount = "+playCount);
+				log.fine("calling runExperiment(TRIGGER_TEST_PKT_TRAINS) ");
+				runExperiment(TRIGGER_TEST_PKT_TRAINS);
+			}
+			break;
+
+//		case SET_SCHEME_REQUEST_COMPLETED:
+//			log.fine("about to send request to enable exploitation");
+//			exploit.enableExploitationSetRequest(1, true);
+//			break;
+		case TRIGGER_TEST_PKT_TRAINS:
+			//log.fine("in runExperiment : TRIGGER_TEST_PKT_TRAINS");
+			exploit.ENABLE=1;
+			log.fine("set exploit.ENABLE = 1");
+			log.fine("about to call sendTestPacketTrain()");
+			exploit.sendTestPacketTrain(2, 1, true);
+			break;
+		case UPDATE_RECENT_STATS:
+			//log.fine("in runExperiment : UPDATE_RECENT_STATS");
+			playCount++;
+			LocalPlayRecord _local_play_record=new LocalPlayRecord();
+			_local_play_record.bandit=brigands[banditCurrent].clone();
+			_local_play_record.banditPlayed=(Integer)banditCurrent;
+			//implicit assumption that each play consists of sending a single testpacket 
+			if (exploit.getStats(exploit.GET_RECENT_ERROR_CNT)>0) {
+				bandit_params[banditID].beta++;
+				_local_play_record.success=false;
+			}else if(exploit.getStats(exploit.GET_RECENT_RX_TESTPKT_CNT)>0){ //need to check this condition 'coz sometimes u may get RxTestPktCnt=0
+				bandit_params[banditID].alpha++;
+				_local_play_record.success=true;
+			}
+			local_play_history.add(_local_play_record);
+			//bandit_params[banditID].beta = bandit_params[banditID].beta + exploit.getStats(exploit.GET_RECENT_ERROR_CNT);
+			//bandit_params[banditID].alpha = bandit_params[banditID].alpha +
+			//		(param_setter.getPhyParam(param_setter.ACTIVE_SCHEME, param_setter.PKTLEN)*8) - exploit.getStats(exploit.GET_RECENT_ERROR_CNT);
+			bandit_params[banditID].gittinsIndex=bandit_indices.gittinsIndex(bandit_params[banditID].alpha, bandit_params[banditID].beta, 0.75);
+			bandit_params[banditID].normalizedIndex=bandit_params[banditID].gittinsIndex*relativeDataRates[banditID];
+			log.fine("bandit_params["+banditID+"].alpha = " + bandit_params[banditID].alpha +
+					" bandit_params["+banditID+"].beta = " + bandit_params[banditID].beta);
+			log.fine("bandit_params["+banditID+"].gittinsIndex = " + bandit_params[banditID].gittinsIndex +
+					" bandit_params["+banditID+"].normalizedIndex = " + bandit_params[banditID].normalizedIndex);
+			
+			LOCAL_EXPERIMENT_COMPLETED=hasBanditSettled()||local_play_history.size()>bandit_flutter_factor;
+			
+			if (!EXPERIMENT_COMPLETED && !LOCAL_EXPERIMENT_COMPLETED) {
+				log.fine("calling runExperiment(INITIATE_EXPERIMENTS) ");
+				runExperiment(INITIATE_EXPERIMENTS);				
+			}else {
+				grand_play_history.add(local_play_history);
+				for (Iterator iterator = local_play_history.iterator(); iterator
+						.hasNext();) {
+					System.out.println("local_play_record: "+iterator.next());
+				}
+				System.out.println("terminal bandit = " +brigands[banditID][0]+brigands[banditID][1]+brigands[banditID][2]+brigands[banditID][3]
+														+brigands[banditID][4]+brigands[banditID][5]+brigands[banditID][6]+brigands[banditID][7]);
+				System.out.println("end of local experiment! starting a new one now");
+				genBrigandSet(brigands[0]);
+				analyzeLocalHistory();
+				resetLocalBandits();
+				runExperiment(INITIATE_EXPERIMENTS);
+				break;
+			}
+			break;
+			//exploit.getStats(exploit.GET_RECENT_RX_TESTPKT_CNT);
+		default:
+			break;
+		}
+	}
+	protected static void resetLocalBandits(){
+		NpUpperLim=1024;
+		NpLowerLim=0;
+		
+		EXPERIMENT_COMPLETED=false;
+		LOCAL_EXPERIMENT_COMPLETED=false;
+		bandit_indices=new BanditIndices();
+		bandit_params=new BanditParams[brigands.length];
+		
+		playCount=0;
+		local_play_history.clear();
+		
+		for (int i = 0; i < brigands.length; i++) {
+			bandit_params[i]=new BanditParams();
+			bandit_params[i].normalizedIndex=bandit_params[i].gittinsIndex*relativeDataRates[i];
+			//System.out.println("bandit_params["+i+"].normalizedIndex = "+bandit_params[i].normalizedIndex);
+		}
+		//System.out.println("max value = "+findMaxValueIndex(bandit_params)[0]+" , max index = "+findMaxValueIndex(bandit_params)[1]+"\n");
+		banditID=(int)findMaxValueIndex(bandit_params)[1];
+		banditCurrent=banditID;
+	}
+	protected static boolean hasBanditSettled(){
+		if (local_play_history.size()>=bandit_settle_factor) {
+			int index=local_play_history.size()-1;
+			Boolean settle=true;
+			while (settle && index>=local_play_history.size()-bandit_settle_factor) {
+				if (local_play_history.get(index).banditPlayed!=banditCurrent) {
+					settle=false;
+				}
+				index--;
+			}
+			return settle.booleanValue();
+		}
+		else{
+			return false;
+		}
+	}
+	protected static double[] findMaxValueIndex(BanditParams[] bandit_params){
+		double[] maxValueIndex={0,0};
+		for (int i = 0; i < bandit_params.length; i++) {
+			if(bandit_params[i].normalizedIndex>maxValueIndex[0]){
+				maxValueIndex[0]=bandit_params[i].normalizedIndex;
+				maxValueIndex[1]=i;
+			}
+		}
+		return maxValueIndex;
+	}
+	protected static void genBrigandSet(int[] winningBandit){
+		//function control params
+		boolean tuneFEC=false;
+		boolean decreaseNp=false;
+		boolean _test_switch=false;
+		//loop iterator
+		Integer i;
+		brigands=new int[3][8];
+		brigands[0]=winningBandit.clone();
+		brigands[1]=winningBandit.clone();
+		brigands[2]=winningBandit.clone();
+		//Np control params
+		int NpCurrent;
+		int NpExtreme;
+		int NpHalf;
+		int NpQuarter;
+		int NpHalfIndex;
+		int NpQuarterIndex;
+		List<Integer> NpValuesSubArray;
+		ArrayList<Integer> NpHalfDist=new ArrayList<Integer>();
+		ArrayList<Integer> NpQuarterDist=new ArrayList<Integer>();
+		int fromIndex;
+		int toIndex;
+		TweakRecord _tweak_record = new TweakRecord();
+		//updating the tweak_log		
+		if (tuneFEC) {
+			brigands[1][7]=2;
+			brigands[1][7]=1;
+		}else{
+			NpCurrent=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).get(winningBandit[param_setter.Scheme_Params_map_keylist.indexOf("Np")]);
+			if(decreaseNp){
+				NpExtreme=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).get(0);
+				fromIndex=0;
+				toIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(NpCurrent);
+				_tweak_record.increaseValue=false;
+			}else{
+				int _length=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).size();
+				NpExtreme=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).get(_length - 1);
+				fromIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(NpCurrent);
+				toIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(NpExtreme);
+				_tweak_record.increaseValue=true;
+			}
+			NpValuesSubArray= param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).subList(fromIndex, toIndex+1);
+			NpHalf=Math.abs((NpExtreme - NpCurrent)) / 2;
+			NpQuarter=Math.abs((NpExtreme - NpCurrent)) / 4;
+			System.out.println("NpCurrent = "+NpCurrent+" NpHalf = "+NpHalf+" NpQuarter = "+NpQuarter);
+			for (i=0; i<NpValuesSubArray.size();i++) {
+				NpHalfDist.add(Math.abs(NpValuesSubArray.get(i)-NpHalf));
+				NpQuarterDist.add(Math.abs(NpValuesSubArray.get(i)-NpQuarter));
+			}
+			NpHalfIndex=NpHalfDist.indexOf(Collections.min(NpHalfDist));
+			NpQuarterIndex=NpQuarterDist.indexOf(Collections.min(NpQuarterDist));
+			brigands[1][param_setter.Scheme_Params_map_keylist.indexOf("Np")]=NpHalfIndex;
+			brigands[2][param_setter.Scheme_Params_map_keylist.indexOf("Np")]=NpQuarterIndex;
+			System.out.println("brigands[1] = "+Arrays.toString(brigands[1])+" --- "+brigands[1][param_setter.Scheme_Params_map_keylist.indexOf("Np")]+" ---- "+NpHalfIndex);
+			System.out.println("brigands[2] = "+Arrays.toString(brigands[2])+" --- "+brigands[2][param_setter.Scheme_Params_map_keylist.indexOf("Np")]+" ---- "+NpQuarterIndex);
+			_tweak_record.paramTweaked="Np";
+			_tweak_record.upperValue=Math.max(NpHalf, NpQuarter);
+			_tweak_record.lowerValue=Math.min(NpHalf, NpQuarter);
+			tweak_log.add(_tweak_record);
+			try {
+				System.out.println("_tweak_record = "+_tweak_record);
+			} catch (Exception e) {
+				System.out.println("something in _tweak_record is null");
+			}
+		}
+		
+		System.out.println();
+	}
+	protected static void genBrigandSetAlternate(int[] winningBandit){
+		//function control params
+		boolean tuneFEC=false;
+		boolean decreaseNp=false;
+		boolean _test_switch=false;
+		boolean _first_time=true;
+		//loop iterator
+		Integer i;
+		brigands=new int[3][8];
+		brigands[0]=winningBandit.clone();
+		brigands[1]=winningBandit.clone();
+		brigands[2]=winningBandit.clone();
+		//Np control params
+		int NpCurrent;
+		int NpExtreme;
+		Integer _NpUpperLim;
+		Integer _NpLowerLim;
+		Integer NpHalf;
+		Integer NpQuarter;
+		int NpHalfIndex;
+		int NpQuarterIndex;
+		List<Integer> NpValuesSubArray;
+		ArrayList<Integer> NpHalfDist=new ArrayList<Integer>();
+		ArrayList<Integer> NpQuarterDist=new ArrayList<Integer>();
+		List<List<LocalParamResults>> local_param_filtered_lists=new ArrayList<List<LocalParamResults>>();
+		LocalParamResults local_param_results_successful = new LocalParamResults();
+		LocalParamResults local_param_results_failiure = new LocalParamResults();
+		int fromIndex;
+		int toIndex;
+		TweakRecord _tweak_record = new TweakRecord();
+		//updating the tweak_log	
+		NpCurrent=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).get(winningBandit[param_setter.Scheme_Params_map_keylist.indexOf("Np")]);
+		if (_first_time) {
+			NpUpperLim=NpCurrent;
+			NpLowerLim=0;
+			_NpUpperLim=NpUpperLim;
+			_NpLowerLim=NpLowerLim;
+			fromIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(_NpLowerLim);
+			toIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(_NpUpperLim);
+			//_tweak_record.increaseValue=false;	
+		}else {
+			local_param_filtered_lists=analyzeLocalHistory();
+			if (!local_param_filtered_lists.get(0).isEmpty()) { //the success list is non-empty
+				local_param_results_successful=local_param_filtered_lists.get(0).get(0);
+				NpUpperLim=local_param_results_successful.paramValue;
+				if (!local_param_filtered_lists.get(1).isEmpty()) { //we've had some failiures too!
+					local_param_results_failiure=local_param_filtered_lists.get(1).get(1);
+					NpLowerLim=local_param_results_failiure.paramValue;
+				}
+			}
+			else if(local_param_filtered_lists.get(0).isEmpty() ){ //we've had no success!. everything has failed :(((
+				if(!local_param_filtered_lists.get(1).isEmpty()){  //adjust the lower limit if you get a non-empty failiure list
+					local_param_results_failiure=local_param_filtered_lists.get(1).get(1);
+					NpLowerLim=local_param_results_failiure.paramValue;
+				}
+				NpUpperLim=2*NpCurrent;
+				if(NpUpperLim>param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")). //if NpUpperLim exceeds max Np Value, set it to max value
+						get(param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).size()-1) ){
+					NpUpperLim=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).
+							get(param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).size()-1);
+				}
+			}
+			_NpUpperLim=NpUpperLim;
+			_NpLowerLim=NpLowerLim; 
+			fromIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(_NpLowerLim);
+			toIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(_NpUpperLim);
+			//lets now ensure that the limits are in sane positions.
+			if(!(Math.abs(fromIndex-toIndex) > 3) ){
+				_tweak_record.continueTweaking=false;
+			}
+			NpValuesSubArray= param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).subList(fromIndex, toIndex+1);
+			NpHalf    = Math.abs((_NpUpperLim-_NpLowerLim)) / 2;
+			NpQuarter = Math.abs((_NpUpperLim-_NpLowerLim)) / 4;
+			System.out.println("NpCurrent = "+NpCurrent+" NpHalf = "+NpHalf+" NpQuarter = "+NpQuarter);
+			for (i=0; i<NpValuesSubArray.size();i++) {
+				NpHalfDist.add(Math.abs(NpValuesSubArray.get(i)-NpHalf));
+				NpQuarterDist.add(Math.abs(NpValuesSubArray.get(i)-NpQuarter));
+			}
+			NpHalfIndex=NpHalfDist.indexOf(Collections.min(NpHalfDist));
+			NpQuarterIndex=NpQuarterDist.indexOf(Collections.min(NpQuarterDist));
+			brigands[1][param_setter.Scheme_Params_map_keylist.indexOf("Np")]=NpHalfIndex;
+			brigands[2][param_setter.Scheme_Params_map_keylist.indexOf("Np")]=NpQuarterIndex;
+			System.out.println("brigands[1] = "+Arrays.toString(brigands[1])+" --- "+brigands[1][param_setter.Scheme_Params_map_keylist.indexOf("Np")]+" ---- "+NpHalfIndex);
+			System.out.println("brigands[2] = "+Arrays.toString(brigands[2])+" --- "+brigands[2][param_setter.Scheme_Params_map_keylist.indexOf("Np")]+" ---- "+NpQuarterIndex);
+
+			
+			
+			if (!local_param_filtered_lists.get(1).isEmpty()) {
+				
+			}
+		}
+		if (tuneFEC) {
+			brigands[1][7]=2;
+			brigands[1][7]=1;
+		}else{
+			NpCurrent=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).get(winningBandit[param_setter.Scheme_Params_map_keylist.indexOf("Np")]);
+			if(decreaseNp){
+				NpExtreme=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).get(0);
+				fromIndex=0;
+				toIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(NpCurrent);
+				_tweak_record.increaseValue=false;
+			}else{
+				int _length=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).size();
+				NpExtreme=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).get(_length - 1);
+				fromIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(NpCurrent);
+				toIndex=param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).indexOf(NpExtreme);
+				_tweak_record.increaseValue=true;
+			}
+			NpValuesSubArray= param_setter.Scheme_Params_values_list.get(param_setter.Scheme_Params_map_keylist.indexOf("Np")).subList(fromIndex, toIndex+1);
+			NpHalf=Math.abs((NpExtreme - NpCurrent)) / 2;
+			NpQuarter=Math.abs((NpExtreme - NpCurrent)) / 4;
+			System.out.println("NpCurrent = "+NpCurrent+" NpHalf = "+NpHalf+" NpQuarter = "+NpQuarter);
+			for (i=0; i<NpValuesSubArray.size();i++) {
+				NpHalfDist.add(Math.abs(NpValuesSubArray.get(i)-NpHalf));
+				NpQuarterDist.add(Math.abs(NpValuesSubArray.get(i)-NpQuarter));
+			}
+			NpHalfIndex=NpHalfDist.indexOf(Collections.min(NpHalfDist));
+			NpQuarterIndex=NpQuarterDist.indexOf(Collections.min(NpQuarterDist));
+			brigands[1][param_setter.Scheme_Params_map_keylist.indexOf("Np")]=NpHalfIndex;
+			brigands[2][param_setter.Scheme_Params_map_keylist.indexOf("Np")]=NpQuarterIndex;
+			System.out.println("brigands[1] = "+Arrays.toString(brigands[1])+" --- "+brigands[1][param_setter.Scheme_Params_map_keylist.indexOf("Np")]+" ---- "+NpHalfIndex);
+			System.out.println("brigands[2] = "+Arrays.toString(brigands[2])+" --- "+brigands[2][param_setter.Scheme_Params_map_keylist.indexOf("Np")]+" ---- "+NpQuarterIndex);
+			_tweak_record.paramTweaked="Np";
+			_tweak_record.upperValue=Math.max(NpHalf, NpQuarter);
+			_tweak_record.lowerValue=Math.min(NpHalf, NpQuarter);
+			tweak_log.add(_tweak_record);
+			try {
+				System.out.println("_tweak_record = "+_tweak_record);
+			} catch (Exception e) {
+				System.out.println("something in _tweak_record is null");
+			}
+		}
+		
+		System.out.println();
+	}	
+	private static List<List<LocalParamResults>> analyzeLocalHistory(){
+		//another version 
+		//assumes that the parameter that has varied in this local history is Np.
+		String paramUnderAnalysis="Np";
+		List<LocalParamResults> local_param_result_list = new ArrayList<LocalParamResults>();
+		List<LocalParamResults> local_param_success_list=new ArrayList<LocalParamResults>();
+		List<LocalParamResults> local_param_failiure_list=new ArrayList<LocalParamResults>();
+		List<List<LocalParamResults>> local_param_filtered_lists=new ArrayList<List<LocalParamResults>>();
+		List<Integer> local_param_list=new ArrayList<Integer>();
+		
+		LocalParamResults _local_param_results;
+		
+		int _ParamIndexPosition=param_setter.Scheme_Params_map_keylist.indexOf(paramUnderAnalysis);
+		
+		for (int i = 0; i < brigands.length; i++) {
+			_local_param_results=new LocalParamResults();
+			_local_param_results.paramValue=param_setter.Scheme_Params_values_list.get(_ParamIndexPosition).get(brigands[i][_ParamIndexPosition]);
+			local_param_list.add(_local_param_results.paramValue);
+			local_param_result_list.add(_local_param_results);
+		}
+		//check for duplicates
+		java.util.Set<Integer> dup_check_set=new HashSet<Integer>(local_param_list);
+		if(dup_check_set.size()<local_param_list.size()){
+			log.warning("found duplicates! looks like you are analyzing the wrong param. local_param_list = "+local_param_list);
+		}
+		for (int i = 0; i < local_play_history.size(); i++) {
+			int _param_value=param_setter.Scheme_Params_values_list.get(_ParamIndexPosition).get(local_play_history.get(i).bandit[_ParamIndexPosition]);
+			int _index=local_param_list.indexOf((Integer)_param_value);
+			local_param_result_list.get(_index).paramCount++;
+			if (local_play_history.get(i).success) {
+				local_param_result_list.get(_index).paramSuccessCount++;
+			}
+			local_param_result_list.get(_index).successRatio = local_param_result_list.get(_index).paramSuccessCount / local_param_result_list.get(_index).paramCount;
+		}
+		for (ListIterator<LocalParamResults> iterator = local_param_result_list.listIterator(); iterator.hasNext();) {
+			LocalParamResults __local_param_results= iterator.next();
+			if((__local_param_results.paramCount>1 && __local_param_results.successRatio>0.5)){
+				__local_param_results.Success=true;
+				local_param_success_list.add(__local_param_results);
+			}else if(__local_param_results.paramCount>1 && __local_param_results.successRatio<=0.5){
+				__local_param_results.Success=false;
+				local_param_failiure_list.add(__local_param_results);
+			}
+			SortByParamValue sort_by_param_value = new SortByParamValue();
+			Collections.sort(local_param_success_list, sort_by_param_value);
+			Collections.sort(local_param_failiure_list, sort_by_param_value);			
+		}
+		local_param_filtered_lists.add(local_param_success_list);
+		local_param_filtered_lists.add(local_param_failiure_list);
+		System.out.println("local_param_result_list = "+local_param_result_list);
+		System.out.println("local_param_filtered_lists = "+local_param_filtered_lists);
+		return local_param_filtered_lists;
+	}
+	private static class LocalPlayRecord{
+		int[] bandit;
+		Integer banditPlayed;
+		Boolean success;
+		public String toString(){
+			return "bandit="+bandit[1]+bandit[2]+bandit[3]
+					+bandit[4]+bandit[5]+bandit[6]+bandit[7]
+					+" banditPlayed="+banditPlayed.toString()+" success="+success.toString();
+		}
+	}
+	
+//	private static class SortBySuccessRatio implements Comparator<LocalParamResults>{
+//		public int compare(LocalParamResults __local_param_results_1, LocalParamResults __local_param_results_2) {
+//			return __local_param_results_1.successRatio.compareTo(__local_param_results_2.successRatio);
+//		}
+//	}
+	private static class SortByParamValue implements Comparator<LocalParamResults>{
+		public int compare(LocalParamResults o1, LocalParamResults o2) {
+			return o1.paramValue.compareTo(o2.paramValue);
+		}
+	}
+	private static class SortBySuccessValue implements Comparator<LocalParamResults>{
+		public int compare(LocalParamResults o1, LocalParamResults o2) {
+			return o1.Success.compareTo(o2.Success);
+		}
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

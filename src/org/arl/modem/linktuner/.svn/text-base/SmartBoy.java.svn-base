@@ -1,0 +1,53 @@
+package org.arl.modem.linktuner;
+
+import jade.core.AID;
+import jade.core.behaviours.SimpleBehaviour;
+import jade.util.Logger;
+
+import java.util.*;
+import org.arl.modem.FAPIAgent;
+import org.arl.modem.FAPIMessage;
+import org.arl.modem.link.Link;
+import org.arl.modem.phy.Physical;
+
+public class SmartBoy extends FAPIAgent{
+	protected  AID link;
+	protected  AID phy;
+	protected  AID notify;
+	
+	public final static String NOTIFICATIONS = "SmartBoy-ntf";
+	
+	public static int ENABLE=0;
+	
+	private ParamSetter param_setter;
+	private Exploit ex;
+	private ExperimentalBandits experimental_bandits;
+	
+
+	public void setup() {
+		super.setup();
+		info("$Id: ParamTester agent $");
+		subscribeTopic(Link.NOTIFICATIONS);
+		subscribeTopic(Physical.NOTIFICATIONS);
+		link = new AID(getAgentProperty("lnk", "lnk"), AID.ISLOCALNAME);
+	    phy = new AID(getAgentProperty("phy", "phy"), AID.ISLOCALNAME);
+	    
+		notify = getTopic(NOTIFICATIONS);
+		param_setter = new ParamSetter(this, (Logger) this.log);
+		ex = new org.arl.modem.linktuner.Exploit(this, (Logger)this.log);
+		experimental_bandits=new ExperimentalBandits(this, param_setter, ex, (Logger)this.log);
+		System.out.println("SmartBoy agent is loaded");
+	}
+	protected void handleMessage(FAPIMessage msg){
+		if (msg.getPerformative() == FAPIMessage.REQUEST) {
+			FAPIMessage rsp = msg.createReply();
+			rsp.setPerformative(FAPIMessage.AGREE);
+			send(rsp);
+		}
+		FAPIMessage ntf=createMessage(FAPIMessage.INFORM,notify);
+		param_setter.handleMessage(msg);
+		ex.handleMessage(msg);
+		send(ntf);
+	}
+	
+}

@@ -1,0 +1,204 @@
+package org.arl.modem.linktuner;
+
+import jade.util.Logger;
+import java.lang.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.ListIterator;
+
+public class ExperimentalBandits {
+									//	MTYPE     DMODE	  MPSK      NC      NP      NZ    PKTLEN   FEC  
+	public final static int brigands[][]={{1,		1,		1,		4,		7,		0,		1,		3},    //Coherent,	freq,	QPSK,	Nc=1024,	Np=512,		Nz(=5),		Pktlen=48,		full coding. 	duration=?				
+										  {1,		1,		1,		3,		6,		0,		1,		3},	   //Coherent,	freq,	QPSK,	Nc=512, 	Np=256,		Nz(=5),		Pktlen=48,		full coding.	duration=?
+										  {1,		0,		1,		0,		3,		0,		1,		3},	   //Coherent,	time,	QPSK,	Nc=64,		Np=32,		Nz(=5),		Pktlen=48,		full coding.	duration=?	
+										  {1,		0,		1,		1,		4,		0,		1,		3},	   //Coherent,	time,	QPSK,	Nc=128,		Np=64,		Nz(=5),		Pktlen=48,		full coding.	duration=?
+										
+										  {1,		1,		0,		4,		7,		0,		1,		3},    //Coherent,	freq,	BPSK,	Nc=1024,	Np=512,		Nz(=5),		Pktlen=48,		full coding. 	duration=?				
+										  {1,		1,		0,		3,		6,		0,		1,		3},	   //Coherent,	freq,	BPSK,	Nc=512, 	Np=256,		Nz(=5),		Pktlen=48,		full coding.	duration=?
+										  {1,		0,		0,		0,		3,		0,		1,		3},	   //Coherent,	time,	BPSK,	Nc=64,		Np=32,		Nz(=5),		Pktlen=48,		full coding.	duration=?	
+										  {1,		0,		0,		1,		4,		0,		1,		3},	   //Coherent,	time,	BPSK,	Nc=128,		Np=64,		Nz(=5),		Pktlen=48,		full coding.	duration=?
+
+										  };
+	//check if these are valid
+	public final static double relativeDataRates[]={1.39899,   1.34199,   1.38303,   1.35033,
+													0.33333,   1.00000,   0.63636,   0.27729};
+	
+	public static boolean EXPERIMENT_COMPLETED=false;
+	public static boolean LOCAL_EXPERIMENT_COMPLETED=false;
+	
+	private static int banditID=0;
+	//public static int bandit[]=brigands[banditID];
+	private static int banditCurrent;
+	private static int banditPrev;
+	private static int playCount=0;
+	private static int bandit_settle_factor=4;  //No of times you need to play the same arm consecutively 
+												//(and successfully) to declare that the bandit 
+												//has "settled".
+	private static SmartBoy smart_boy;
+	private static Logger log;
+	private static ParamSetter param_setter;
+	private static Exploit exploit;
+	private static BanditIndices bandit_indices=new BanditIndices();
+	protected static BanditParams[] bandit_params=new BanditParams[brigands.length];
+	
+	protected static List<List<Integer>> grand_play_history = new ArrayList<List<Integer>>();
+	protected static List<Integer> local_play_history = new ArrayList<Integer>();
+	
+	public final static int INITIATE_EXPERIMENTS=999;
+//	public final static int SET_SCHEME_REQUEST_COMPLETED=1000;
+	public final static int TRIGGER_TEST_PKT_TRAINS=1001;
+	public static final int UPDATE_RECENT_STATS=1002;
+	
+	protected ExperimentalBandits(SmartBoy _smart_boy, ParamSetter _param_setter, Exploit _exploit, Logger _log){
+		
+		this.param_setter=_param_setter;
+		this.smart_boy=_smart_boy;
+		this.exploit=_exploit;
+		this.log=_log;
+		if(brigands.length!=relativeDataRates.length){
+			System.out.println("lengths of brigands and relativeDataRates don't match");
+		}
+		for (int i = 0; i < brigands.length; i++) {
+			bandit_params[i]=new BanditParams();
+			bandit_params[i].normalizedIndex=bandit_params[i].gittinsIndex*relativeDataRates[i];
+		//	System.out.println("bandit_params["+i+"].normalizedIndex = "+bandit_params[i].normalizedIndex);
+		}
+	//	System.out.println("max value = "+findMaxValueIndex(bandit_params)[0]+" , max index = "+findMaxValueIndex(bandit_params)[1]+"\n");
+		banditID=(int)findMaxValueIndex(bandit_params)[1];
+		banditCurrent=banditID;
+		local_play_history.clear();
+		System.out.println("Experimental bandits initialized");
+	}
+	public static void runExperiment(int msgType){
+		switch (msgType) {
+		case INITIATE_EXPERIMENTS:
+			//log.fine("in runExperiment : INITIATE_EXPERIMENTS");
+			banditID=(int)findMaxValueIndex(bandit_params)[1];
+			banditCurrent=banditID;
+			if (playCount==0) {
+				param_setter.currentSetSchemeParam=brigands[banditID];
+				//crashes when you set param_setter.currentSetSchemeParam=brigands[2]. investigate why. perhaps its an invalid scheme???
+				param_setter.setSchemeRequest(param_setter.currentSetSchemeParam, true);
+				banditPrev=banditCurrent;
+				log.fine("banditID = "+banditID+", index = "+findMaxValueIndex(bandit_params)[0]);
+				break;
+			}else if (banditCurrent!=banditPrev) {
+				param_setter.currentSetSchemeParam=brigands[banditID];
+				//crashes when you set param_setter.currentSetSchemeParam=brigands[2]. investigate why. perhaps its an invalid scheme???
+				param_setter.setSchemeRequest(param_setter.currentSetSchemeParam, true);
+				banditPrev=banditCurrent;
+				log.fine("banditID = "+banditID+", index = "+findMaxValueIndex(bandit_params)[0]+" playCount = "+playCount);				
+			}else {
+				//current recommendation is same as previous, so we can proceed straight to play
+				log.fine("banditID = "+banditID+", index = "+findMaxValueIndex(bandit_params)[0]+" playCount = "+playCount);
+				log.fine("calling runExperiment(TRIGGER_TEST_PKT_TRAINS) ");
+				runExperiment(TRIGGER_TEST_PKT_TRAINS);
+			}
+			break;
+
+//		case SET_SCHEME_REQUEST_COMPLETED:
+//			log.fine("about to send request to enable exploitation");
+//			exploit.enableExploitationSetRequest(1, true);
+//			break;
+		case TRIGGER_TEST_PKT_TRAINS:
+			//log.fine("in runExperiment : TRIGGER_TEST_PKT_TRAINS");
+			exploit.ENABLE=1;
+			log.fine("set exploit.ENABLE = 1");
+			log.fine("about to call sendTestPacketTrain()");
+			exploit.sendTestPacketTrain(2, 1, true);
+			break;
+		case UPDATE_RECENT_STATS:
+			//log.fine("in runExperiment : UPDATE_RECENT_STATS");
+			local_play_history.add((Integer)banditCurrent);
+			playCount++;
+			//implicit assumption that each play consists of sending a single testpacket 
+			if (exploit.getStats(exploit.GET_RECENT_ERROR_CNT)>0) {
+				bandit_params[banditID].beta++;
+			}else if(exploit.getStats(exploit.GET_RECENT_RX_TESTPKT_CNT)>0){ //need to check this condition 'coz sometimes u may get RxTestPktCnt=0
+				bandit_params[banditID].alpha++;
+			}
+			//bandit_params[banditID].beta = bandit_params[banditID].beta + exploit.getStats(exploit.GET_RECENT_ERROR_CNT);
+			//bandit_params[banditID].alpha = bandit_params[banditID].alpha +
+			//		(param_setter.getPhyParam(param_setter.ACTIVE_SCHEME, param_setter.PKTLEN)*8) - exploit.getStats(exploit.GET_RECENT_ERROR_CNT);
+			bandit_params[banditID].gittinsIndex=bandit_indices.gittinsIndex(bandit_params[banditID].alpha, bandit_params[banditID].beta, 0.75);
+			bandit_params[banditID].normalizedIndex=bandit_params[banditID].gittinsIndex*relativeDataRates[banditID];
+			log.fine("bandit_params["+banditID+"].alpha = " + bandit_params[banditID].alpha +
+					" bandit_params["+banditID+"].beta = " + bandit_params[banditID].beta);
+			log.fine("bandit_params["+banditID+"].gittinsIndex = " + bandit_params[banditID].gittinsIndex +
+					" bandit_params["+banditID+"].normalizedIndex = " + bandit_params[banditID].normalizedIndex);
+			
+			//checking if the bandit has settled
+			//Check to see if you get 4 in a row?
+			
+			LOCAL_EXPERIMENT_COMPLETED=hasBanditSettled();
+			
+			if (!EXPERIMENT_COMPLETED && !LOCAL_EXPERIMENT_COMPLETED) {
+				log.fine("calling runExperiment(INITIATE_EXPERIMENTS) ");
+				runExperiment(INITIATE_EXPERIMENTS);				
+			}else {
+				grand_play_history.add(local_play_history);
+
+				ListIterator<Integer> _iterator = local_play_history.listIterator();
+				while (_iterator.hasNext()) {
+					Integer bandit = (Integer) _iterator.next();
+					System.out.println("play = "+_iterator.nextIndex()+", Bandit = "+bandit);
+				}
+				System.out.println("terminal bandit = " +" "+brigands[banditID][0]+" "+brigands[banditID][1]+" "+brigands[banditID][2]
+														+" "+brigands[banditID][3]+" "+brigands[banditID][4]+" "+brigands[banditID][5]
+														+" "+brigands[banditID][6]+" "+brigands[banditID][7]+" ");
+				
+				System.out.println("end of local experiment! starting a new one now");
+				resetLocalBandits();
+				runExperiment(INITIATE_EXPERIMENTS);
+				break;
+			}
+			break;
+			//exploit.getStats(exploit.GET_RECENT_RX_TESTPKT_CNT);
+		default:
+			break;
+		}
+	}
+	protected static void resetLocalBandits(){
+		EXPERIMENT_COMPLETED=false;
+		LOCAL_EXPERIMENT_COMPLETED=false;
+		playCount=0;
+		local_play_history.clear();
+		
+		for (int i = 0; i < brigands.length; i++) {
+			bandit_params[i]=new BanditParams();
+			bandit_params[i].normalizedIndex=bandit_params[i].gittinsIndex*relativeDataRates[i];
+			//System.out.println("bandit_params["+i+"].normalizedIndex = "+bandit_params[i].normalizedIndex);
+		}
+		//System.out.println("max value = "+findMaxValueIndex(bandit_params)[0]+" , max index = "+findMaxValueIndex(bandit_params)[1]+"\n");
+		banditID=(int)findMaxValueIndex(bandit_params)[1];
+		banditCurrent=banditID;
+	}
+	protected static boolean hasBanditSettled(){
+		if (local_play_history.size()>=bandit_settle_factor) {
+			int index=local_play_history.size()-1;
+			Boolean settle=true;
+			while (settle && index>=local_play_history.size()-bandit_settle_factor) {
+				if (local_play_history.get(index)!=banditCurrent) {
+					settle=false;
+				}
+				index--;
+			}
+			return settle.booleanValue();
+		}
+		else{
+			return false;
+		}
+	}
+	protected static double[] findMaxValueIndex(BanditParams[] bandit_params){
+		double[] maxValueIndex={0,0};
+		for (int i = 0; i < bandit_params.length; i++) {
+			if(bandit_params[i].normalizedIndex>maxValueIndex[0]){
+				maxValueIndex[0]=bandit_params[i].normalizedIndex;
+				maxValueIndex[1]=i;
+			}
+		}
+		return maxValueIndex;
+	}
+}

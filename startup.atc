@@ -1,0 +1,39 @@
+# load agents
+AT/lnk:org.arl.modem.link.Link
+AT/mac:org.arl.modem.link.SimpleMac
+#AT/maca:org.arl.modem.link.Maca
+AT/rng:org.arl.modem.link.Ranging
+#AT/echo:org.arl.modem.net.Repeater
+
+# load commands
+AT/org.arl.modem.link.LinkCommands
+AT/org.arl.modem.link.SimpleMacCommands
+AT/org.arl.modem.link.MacaCommands
+AT/org.arl.modem.link.RangingCommands
+AT/org.arl.modem.phy.PhysicalCommands
+AT/org.arl.modem.HardwareCommands
+AT/org.arl.modem.GeneralCommands
+
+
+AT/sb:org.arl.modem.linktuner.SmartBoy
+AT/org.arl.modem.linktuner.SmartBoyCommands
+
+# boot fpga & dsp
+AT~HFPGA=1
+AT~HDSP1=1
+AT~HDSP1.VER?
+
+# defaults
+AT~PP.1.PKTLEN=18
+AT~PP.1.ENABLE=1
+AT~PP.RX-ENABLE=2
+AT~PP.CORR1-THR=15000000
+AT~PP.OCXO-ENABLE=1
+
+##Link tuning specific commands
+AT~PP.2.ENABLE=1
+AT~LP.ENABLE=1
+AT~pp.1.PR-DEF=0x100
+AT~pp.2.PR-DEF=0x200
+
+AT~PP.2.TESTPKT=1 ##initializing the linktuner
