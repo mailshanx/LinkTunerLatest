@@ -35,7 +35,7 @@ public class SmartBoy extends FAPIAgent{
 		param_setter = new ParamSetter(this, (Logger) this.log);
 		ex = new org.arl.modem.linktuner.Exploit(this, (Logger)this.log);
 		log.fine("about to instantiate experimental_bandits-------->");
-		experimental_bandits=new ExperimentalBandits(this, param_setter, ex, (Logger)this.log);
+		experimental_bandits=new ExperimentalBandits(param_setter, ex, (Logger)this.log);
 		log.fine("after instantiating experimental_bandits");
 		BER_tester=new BERtester(param_setter, ex, (Logger)this.log);
 		log.fine("after instantiating BER_tester");

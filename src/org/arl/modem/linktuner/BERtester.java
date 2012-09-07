@@ -5,33 +5,24 @@ import org.arl.modem.FAPIMessage;
 import jade.util.Logger;
 
 //class to comprehensively test BERs for all schemes
-public class BERtester {
-	private Logger log;
+public class BERtester extends ExperimentTemplate implements Notifiable<LinktunerNotifications>{
 	private ParamSetter param_setter;
-	private Exploit exploit;
 	private BERtestSchemeGenerator scheme_generator;
 	private BERtestHistoryTracker BER_test_history_tracker;
 	private int brigands[][];
 	private int banditCurrent;
-	
-	private int batch_size;
 	private int playCount;
-	
-	public static boolean ENABLE_CALLBACK=false;
-	
+		
 	public static boolean EXPERIMENT_COMPLETED=false;
 	
-	public final static int INITIATE_EXPERIMENTS=999;
-	public final static int TRIGGER_TEST_PKT_TRAINS=1000;
-	public final static int UPDATE_RECENT_STATS=1001;
-		
+	private boolean ENABLE_CALLBACK=false;
+			
 	public BERtester(ParamSetter _param_setter, Exploit _exploit, Logger _log){
 		this.log=_log;
 		this.param_setter=_param_setter;
 		this.exploit=_exploit;
 		this.scheme_generator = new BERtestSchemeGenerator(_log);
 		this.BER_test_history_tracker = new BERtestHistoryTracker(_exploit, _log);
-		batch_size=1;
 		
 		String pwd = System.getProperty("user.dir");
 		In in = new In(pwd+"/linktuner.config");
@@ -64,27 +55,19 @@ public class BERtester {
 			System.out.println("result of scheme_generator.getSchemes(): ");
 			//log.fine(StrRepr.strRepr(brigands));
 			log.fine("calling RunBERtest(INITIATE_EXPERIMENTS)");
-			RunBERtest(INITIATE_EXPERIMENTS);
+			runExperiment(INITIATE_EXPERIMENTS);
 		}
 	}
+	
+	@Override
+	protected void initiateExperiment() {
+		banditCurrent=playCount;
+		param_setter.currentSetSchemeParam=brigands[banditCurrent];
+		param_setter.setSchemeRequest(param_setter.currentSetSchemeParam, true);			
+	}
 
-	public void RunBERtest(int msgType){
-		switch (msgType) {
-		case INITIATE_EXPERIMENTS:
-			log.fine("arrived at RunBERtest.INITIATE_EXPERIMENTS");
-			banditCurrent=playCount;
-			param_setter.currentSetSchemeParam=brigands[banditCurrent];
-			param_setter.setSchemeRequest(param_setter.currentSetSchemeParam, true);
-			break;
-		case TRIGGER_TEST_PKT_TRAINS:
-			log.fine("arrived at RunBERtest.TRIGGER_TEST_PKT_TRAINS");
-			Exploit.ENABLE=1;
-			log.fine("set exploit.ENABLE = 1");
-			log.fine("about to call sendTestPacketTrain()");
-			exploit.sendTestPacketTrain(ParamSetter.ACTIVE_SCHEME, batch_size, true);			
-			break;
-		case UPDATE_RECENT_STATS:
-			log.fine("arrived at RunBERtest.UPDATE_RECENT_STATS");
+	@Override
+	protected void updateRecentStats() {
 			playCount++;
 			log.fine("playCount = "+playCount);
 			if (playCount==brigands.length) {
@@ -95,16 +78,19 @@ public class BERtester {
 			BER_test_history_tracker.updateHistory(brigands, banditCurrent);
 			BER_test_history_tracker.printLatestHistory();
 			if(!EXPERIMENT_COMPLETED){
-				RunBERtest(INITIATE_EXPERIMENTS);
+				runExperiment(INITIATE_EXPERIMENTS);
 			}else {
 				log.fine("end of BER test");
 				Exploit.ENABLE=0;
 				ENABLE_CALLBACK=false;
 				BER_test_history_tracker.printGrandPlayHistory();
-			}
-			break;
-		default:
-			break;
+			}					
+	}
+	@Override
+	public void handleLinktunerNotifications(LinktunerNotifications ntf) {
+		if(ENABLE_CALLBACK){
+			log.fine("inside BERtester");
+			handleSomeLinktunerNtfs(ntf);
 		}
 	}
 	

@@ -6,17 +6,10 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.PrintStream;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.ListIterator;
 import java.util.logging.Level;
 
 import org.arl.modem.FAPIMessage;
- public class ExperimentalBandits {
+ public class ExperimentalBandits extends ExperimentTemplate implements Notifiable<LinktunerNotifications> {
 	 									   //  MTYPE   DMODE   MPSK    NC       NP   	Nz   PKTLEN    FEC     TX-ATT
 	public final static int brigands_init[][]={ 
 												{1,		1,		1,		4,		32,		0,		1,		0,		22},    //Coherent,	freq,	QPSK,	Nc=1024,	Np=512,		TX_ATT(=36),		Pktlen=48,		full coding. 	duration=?				
@@ -43,11 +36,13 @@ import org.arl.modem.FAPIMessage;
 	
 	public static boolean EXPERIMENT_COMPLETED=false;
 	public static boolean LOCAL_EXPERIMENT_COMPLETED=false;
-	public static boolean ENABLE_CALLBACK=false;
 	
 	//private int banditID=0;
 	public int banditCurrent;
-	private static int playCount=0;
+	private int localExperimentPlayCount=0;
+	private int playCountInitValue=0;
+	private int pilotPacketCntForActiveTuning=0;
+	
 	public static int BANDIT_SETTLE_FACTOR=3;  //No of times(+1) you need to play the same arm consecutively 
 												//(and successfully) to declare that the bandit 
 												//has "settled".
@@ -57,9 +52,7 @@ import org.arl.modem.FAPIMessage;
 	public static final int SPARSE_SAMPLING_IN_PROGRESS=1000; 
 	public static final int STEADY_STATE=1001;
 		
-	private Logger log;
 	private ParamSetter param_setter;
-	private Exploit exploit;
 	protected TweakRecord tweak_record;
 	private PktLenManager pkt_len_manager;	//reserved for later use
 	private BrigandGenerable brigand_generator;
@@ -68,12 +61,14 @@ import org.arl.modem.FAPIMessage;
 	
 	protected static ArrayList<TweakRecord> tweak_log;
 	
+	private boolean ENABLE_CALLBACK=false;
+	
 	public final static int INITIATE_EXPERIMENTS=999;
 //	public final static int SET_SCHEME_REQUEST_COMPLETED=1000;
 	public final static int TRIGGER_TEST_PKT_TRAINS=1001;
 	public static final int UPDATE_RECENT_STATS=1002;
 	
-	protected ExperimentalBandits(SmartBoy _smart_boy, ParamSetter _param_setter, Exploit _exploit, Logger _log){
+	protected ExperimentalBandits(ParamSetter _param_setter, Exploit _exploit, Logger _log){
 		this.param_setter=_param_setter;
 		this.exploit=_exploit;
 		this.log=_log;
@@ -106,72 +101,74 @@ import org.arl.modem.FAPIMessage;
 			ENABLE_CALLBACK=true;
 			log.fine("brigand 1 ======== "+StrRepr.strRepr(brigands[1]));
 			bandit_param_manager.printBanditParamStatus();
-			runExperiment(INITIATE_EXPERIMENTS);
+			beginActiveTuning(18);
 		}
 	}
-	public void runExperiment(int msgType){
-		switch (msgType) {
-		case INITIATE_EXPERIMENTS:
-			//log.fine("in runExperiment : INITIATE_EXPERIMENTS");
-			banditCurrent=bandit_param_manager.getBestBanditID();
-			param_setter.currentSetSchemeParam=brigands[banditCurrent];
-			param_setter.setSchemeRequest(param_setter.currentSetSchemeParam, true);
-			log.fine("banditCurrent = "+banditCurrent+", bandit= "+StrRepr.strRepr(brigands[banditCurrent])+", index = "+bandit_param_manager.getBestBanditNormalizedIndex()+" playCount = "+playCount);				
-			break;
-		case TRIGGER_TEST_PKT_TRAINS:
-			Exploit.ENABLE=1;
-			log.fine("set exploit.ENABLE = 1");
-			log.fine("about to call sendTestPacketTrain()");
-			exploit.sendTestPacketTrain(ParamSetter.ACTIVE_SCHEME, 1, true);
-			break;
-		case UPDATE_RECENT_STATS:
-			//log.fine("in runExperiment : UPDATE_RECENT_STATS");
-			playCount++;
-			LOCAL_EXPERIMENT_COMPLETED=HasBanditSettled.check(gauss_bandit_history_tracker.getLocalPlayHistory(), BANDIT_SETTLE_FACTOR, banditCurrent)
-					||gauss_bandit_history_tracker.getLocalPlayHistory().size()>bandit_flutter_factor;
-			bandit_param_manager.updateBanditParams(brigands, banditCurrent);
-			gauss_bandit_history_tracker.updateHistory(brigands, banditCurrent, bandit_param_manager.getBanditParams(StrRepr.strRepr(brigands[banditCurrent])));
-//			bandit_param_manager.printBanditParamStatus();
-			gauss_bandit_history_tracker.printLatestHistory();
-			if (!EXPERIMENT_COMPLETED && !LOCAL_EXPERIMENT_COMPLETED) {
-				log.fine("calling runExperiment(INITIATE_EXPERIMENTS) ");
-				runExperiment(INITIATE_EXPERIMENTS);				
-			}else if(!EXPERIMENT_COMPLETED && LOCAL_EXPERIMENT_COMPLETED){
-				log.fine("terminal bandit = "+bandit2str(brigands, banditCurrent)); 
-				log.fine("end of local experiment! starting a new one now");
-				if (brigand_generator.getTunerState()!=STEADY_STATE) {
-//					log.fine("brignads[] list before generating a new set: size = "+brigands.length);
-//					logBrigands(brigands);
-//					log.fine("local_play_history : ");
-//					log.fine("why can't i print local_play_history? trying again:");
-//					for(LocalPlayRecord _play_rec : gauss_bandit_history_tracker.getLatestLocalPlayHistory()){
-//						log.fine(""+_play_rec.toString());
-//					}
-					brigands = brigand_generator.genBrigandSetAlternate(brigands[banditCurrent], brigands, gauss_bandit_history_tracker.getLatestNonEmptyLocalPlayHistory());
-					//brigands=pkt_len_manager.adjustPktLen(brigands);
-//					log.fine("brignads[] list after generating a new set: size = "+brigands.length);
-//					logBrigands(brigands);
-					resetLocalExperiment();
-					bandit_param_manager.printBanditParamStatus();
-				}
-				runExperiment(INITIATE_EXPERIMENTS);
-				break;
-			}else if(EXPERIMENT_COMPLETED){
-				log.fine("end of experiment. printing grandPlayHistory");
-				gauss_bandit_history_tracker.printGrandPlayHistory();
-				break;
+	
+	private void beginActiveTuning(int _no_of_pilot_packets){
+		pilotPacketCntForActiveTuning=_no_of_pilot_packets;
+		playCountInitValue=ExperimentTemplate.getPlayCount();
+		runExperiment(INITIATE_EXPERIMENTS);
+	}
+	
+	@Override
+	public void handleLinktunerNotifications(LinktunerNotifications ntf){
+		if(ENABLE_CALLBACK){
+			log.fine("inside ExperimentalBandits");
+			handleSomeLinktunerNtfs(ntf);
+		}
+	}
+	
+	@Override
+	protected void initiateExperiment(){
+		banditCurrent=bandit_param_manager.getBestBanditID();
+		param_setter.currentSetSchemeParam=brigands[banditCurrent];
+		param_setter.setSchemeRequest(param_setter.currentSetSchemeParam, true);
+		log.fine("banditCurrent = "+banditCurrent+", bandit= "+StrRepr.strRepr(brigands[banditCurrent])+
+				", index = "+bandit_param_manager.getBestBanditNormalizedIndex()+" localExperimentPlayCount = "+localExperimentPlayCount);			
+	}
+	
+	@Override
+	protected void updateRecentStats(){
+		//log.fine("in runExperiment : UPDATE_RECENT_STATS");
+		localExperimentPlayCount++;
+		LOCAL_EXPERIMENT_COMPLETED=HasBanditSettled.check(gauss_bandit_history_tracker.getLocalPlayHistory(), BANDIT_SETTLE_FACTOR, banditCurrent)
+				||gauss_bandit_history_tracker.getLocalPlayHistory().size()>bandit_flutter_factor;
+		if(ExperimentTemplate.getPlayCount()>=(playCountInitValue+pilotPacketCntForActiveTuning)){
+			EXPERIMENT_COMPLETED=true;
+		}else{
+			EXPERIMENT_COMPLETED=false;
+		}
+		bandit_param_manager.updateBanditParams(brigands, banditCurrent);
+		gauss_bandit_history_tracker.updateHistory(brigands, banditCurrent, bandit_param_manager.getBanditParams(StrRepr.strRepr(brigands[banditCurrent])));
+//		bandit_param_manager.printBanditParamStatus();
+		gauss_bandit_history_tracker.printLatestHistory();
+		if (!EXPERIMENT_COMPLETED && !LOCAL_EXPERIMENT_COMPLETED) {
+			log.fine("calling runExperiment(INITIATE_EXPERIMENTS) ");
+			runExperiment(INITIATE_EXPERIMENTS);				
+		}else if(!EXPERIMENT_COMPLETED && LOCAL_EXPERIMENT_COMPLETED){
+			log.fine("terminal bandit = "+bandit2str(brigands, banditCurrent)); 
+			log.fine("end of local experiment! starting a new one now");
+			if (brigand_generator.getTunerState()!=STEADY_STATE) {
+				brigands = brigand_generator.genBrigandSetAlternate(brigands[banditCurrent], brigands, gauss_bandit_history_tracker.getLatestNonEmptyLocalPlayHistory());
+				resetLocalExperiment();
+				bandit_param_manager.printBanditParamStatus();
 			}
-			break;
-		default:
-			break;
+			runExperiment(INITIATE_EXPERIMENTS);
+			return;
+		}else if(EXPERIMENT_COMPLETED){
+			log.fine("end of experiment. printing grandPlayHistory");
+			gauss_bandit_history_tracker.printGrandPlayHistory();
+			return;
 		}
 	}
+		
 	protected void resetLocalExperiment(){
 		log.fine("resetting local experiment");
 		EXPERIMENT_COMPLETED=false;
 		LOCAL_EXPERIMENT_COMPLETED=false;
-		playCount=0;
-		bandit_param_manager.resetBanditParams(brigands, false);
+		localExperimentPlayCount=0;
+		bandit_param_manager.softResetBanditParams(brigands);
 	}
 	public void endOfExperiment(){
 		gauss_bandit_history_tracker.printGrandPlayHistory();	

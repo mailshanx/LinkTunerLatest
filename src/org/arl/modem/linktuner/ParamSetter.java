@@ -45,6 +45,7 @@ public class ParamSetter{
 	public static LinkedHashMap<String, Integer> Scheme_Params_map;
 	public static LinkedList<ArrayList<Integer>> Scheme_Params_values_list;
 	public static List<String> Scheme_Params_map_keylist;
+	public static List<Notifiable<LinktunerNotifications>> Subscriber_List=new ArrayList<Notifiable<LinktunerNotifications>>();
 	//To include further parameters, append them as a new row. Do not disturb existing order of parameters
 	private final static int Scheme_Params_Values[][]=  {{1,2},								//MTYPE:1=incoherent,2=coherent		
 														{1,2},								//DMODE:1=time,2=freq
@@ -77,6 +78,9 @@ public class ParamSetter{
 	public final static int TYPE_SET_SCHEME_PARAM_M_headerLen=1;
 	public final static int TYPE_SEND_SCHEME_PARAM_ACK_S=0xFE;
 	public final static int PARAM_SETTER_PROTOCOL_ID = 4;
+	
+	public final static String LINKTUNER_NTF_ID="ParamSetter_Ntf";
+	public final static String SET_SCHEME_PARAM_DONE_NTF="set_scheme_param_done_ntf";
 	
 	public int currentSetSchemeParam[]={1,1,1,4,6,0,1,3,0};
 	
@@ -200,13 +204,8 @@ public class ParamSetter{
 		log.fine("setSchemeParamOperation = "+setSchemeParamOperation);
 		log.fine("value = "+value);
 		if(setSchemeParamOperation==true && value!=1){     //indicates that the master has successfully completed scheme changes
-			log.fine("experimental_bandits.ENABLE_CALLBACK = "+experimental_bandits.ENABLE_CALLBACK);
-			if(experimental_bandits.ENABLE_CALLBACK){
-				log.fine("calling runExperiment(ExperimentalBandits.TRIGGER_TEST_PKT_TRAINS) ");
-				experimental_bandits.runExperiment(ExperimentalBandits.TRIGGER_TEST_PKT_TRAINS);
-			}else if (BERtester.ENABLE_CALLBACK) {
-				log.fine("calling RunBERtest(BERtester.TRIGGER_TEST_PKT_TRAINS)");
-				BER_tester.RunBERtest(BERtester.TRIGGER_TEST_PKT_TRAINS);
+			for (Notifiable<LinktunerNotifications> subscribers: Subscriber_List) {
+				subscribers.handleLinktunerNotifications(new LinktunerNotifications(LINKTUNER_NTF_ID, SET_SCHEME_PARAM_DONE_NTF));
 			}
 		}
 		if (setSchemeParamOperation==false){
@@ -297,6 +296,7 @@ public class ParamSetter{
 		return ParamSetter.Scheme_Params_map_keylist.indexOf(param);
 	}
     //tries to resend the control packet after a delay of delay milliseconds and for upto maxTries number of tries.
+	@SuppressWarnings("serial")
 	private class resendControlPacketBehaviour extends SimpleBehaviour{
 		private int _delay;
 		private int _ctrlPktType;
@@ -362,7 +362,6 @@ public class ParamSetter{
 	public static void resetSchemeParams(String mode){
 		Scheme_Params_map = new LinkedHashMap<String, Integer>();
 		Scheme_Params_values_list = new LinkedList<ArrayList<Integer>>();
-		System.out.println("Scheme_Params_values_list.size() in the beginning = "+Scheme_Params_values_list.size());
 		//ensure that the order of additions to the map is the same as the order of entries in the array Scheme_Params[].
 		Integer i;
 		Scheme_Params_map.put("MTYPE", 0);
@@ -427,9 +426,11 @@ public class ParamSetter{
 	}
 	public void assignExperimentalBandits(ExperimentalBandits _experimental_bandits){
 		this.experimental_bandits = _experimental_bandits;
+		Subscriber_List.add(experimental_bandits);
 	}
 	public void assignBERtester(BERtester _BER_tester ){
 		this.BER_tester = _BER_tester;
+		Subscriber_List.add(BER_tester);
 	}
 	private void logSchemeParamValues(int _family){
 		int __family;
