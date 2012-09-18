@@ -45,7 +45,7 @@ public class BanditHistoryTracker{
 		_local_play_record.banditPlayed=(Integer)_banditCurrent;
 		updateLocalPlayRecordSuccess(_local_play_record);
 		_local_play_record.BER=exploit.getStats(Exploit.GET_RECENT_BER);
-		_local_play_record.absoluteInstDataRate=updateDataRate(exploit.getStats(Exploit.GET_RECENT_BER));
+		_local_play_record.absoluteInstDataRate=getDataRate(_local_play_record.bandit, exploit.getStats(Exploit.GET_RECENT_BER));
 	}
 	
 	protected void updateLocalPlayRecordSuccess(LocalPlayRecord _local_play_record) {
@@ -57,17 +57,21 @@ public class BanditHistoryTracker{
 		}
 	}
 	
-	public Double updateDataRate(Double _BER){
+	public Double getDataRate(int[] bandit, Double _BER){
 		Double _pkt_duration=(double) ParamSetter.getPhyParam(ParamSetter.ACTIVE_SCHEME, ParamSetter.PKT_DURATION);
 		Double _pkt_len=(double) ParamSetter.getPhyParam(ParamSetter.ACTIVE_SCHEME, ParamSetter.PKTLEN);
 		Double _data_rate=(_pkt_len*8) / _pkt_duration;
-		
-		if(ParamSetter.getPhyParam(ParamSetter.ACTIVE_SCHEME, ParamSetter.Scheme_Params_map.get("FEC"))==0){	//if FEC is off
+		int fec_index=ParamSetter.Scheme_Params_map_keylist.indexOf("FEC");
+		int fec_mask=ParamSetter.Scheme_Params_values_list.get(fec_index).get(bandit[fec_index]);
+		if(fec_mask==0){
 			new FECPenalty();
-			log.fine("_pkt_duration = "+_pkt_duration+", _pkt_len = "+_pkt_len+", _data_rate_uncoded = "+_data_rate+", _BER = "+_BER+", FECPenalty = "+FECPenalty.getCodeRate(_BER));
 			return _data_rate*FECPenalty.getCodeRate(_BER);
 		}else{
-			return _data_rate;
+			if(_BER==0.0){
+				return _data_rate;
+			}else{
+				return 0.0;
+			}
 		}
 	}
 	public void updateGrandPlayHistory(){

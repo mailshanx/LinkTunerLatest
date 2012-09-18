@@ -45,6 +45,7 @@ public class ParamSetter{
 	public static LinkedHashMap<String, Integer> Scheme_Params_map;
 	public static LinkedList<ArrayList<Integer>> Scheme_Params_values_list;
 	public static List<String> Scheme_Params_map_keylist;
+	public static Map<Integer, Double> FEC_mask_to_coderate_mapping;
 	public static List<Notifiable<LinktunerNotifications>> Subscriber_List=new ArrayList<Notifiable<LinktunerNotifications>>();
 	//To include further parameters, append them as a new row. Do not disturb existing order of parameters
 	private final static int Scheme_Params_Values[][]=  {{1,2},								//MTYPE:1=incoherent,2=coherent		
@@ -53,14 +54,15 @@ public class ParamSetter{
 														{64,128,256,512,1024},				//Nc
 														{0,8,16,32,64,128,256,512,1024},    //Np --->Only indicative. Actual Np values are many more.
 														{0},								//Nz
-														{116,   432,	72,		96,		120,
+														{116, 	234,	72,		96,		120,//most frequently used pktlen: 432
+															
 														144,	168,	192,	216,	240,
 														264,	288,	312,	336,	360,
 														384,	408,	432,	456,	480,
 														504,	528,	552,	576,	600,
 														624,	648,	672,	696,	720,
 														744,	768,	792,	816,	840},//PKTLEN
-														{0,1024,65536,66560},                //FEC:0=none, 1024=conv(rate=1/3) only, 65536=golay only, 66560=both.
+														{1024,1024},                //FEC:0=none, 1024=conv(rate=1/3) only, 65536=golay only(rate =1/2), 66560=both.
 														{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,
 														15,16,17,18,19,20,21,22,23,24,25,26,
 														27,28,29,30,31,32,33,34,35,36}		//TX-ATT: 0=full power, 50=damn low power. If operating at sea, 
@@ -410,6 +412,12 @@ public class ParamSetter{
 			}
 			i++;
 		}
+		FEC_mask_to_coderate_mapping = new LinkedHashMap<Integer, Double>();
+		FEC_mask_to_coderate_mapping.put(0, 0.0);
+		FEC_mask_to_coderate_mapping.put(1024, 0.33);
+		FEC_mask_to_coderate_mapping.put(65536, 0.5);
+		FEC_mask_to_coderate_mapping.put(66560, 0.15);
+		
 		//printing out the values list:
 //		System.out.println("----------brace yourself to see THE LIST!!!!------------------");
 //		System.out.println("Scheme_Params_values_list.size() after = "+Scheme_Params_values_list.size());

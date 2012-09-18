@@ -15,8 +15,7 @@ public class BanditParamStatusPrinter {
 	public void printBanditParamsStatus(Map<String, BanditParams> _bandit_params){
 		int i=0;
 		for(Map.Entry<String, BanditParams> entry : _bandit_params.entrySet()){
-			String _to_str=entry.getKey()+" "+entry.getValue().alpha+" "+entry.getValue().beta+" "
-							+entry.getValue().gittinsIndex+" "+entry.getValue().normalizedIndex;
+			String _to_str=entry.getKey()+" "+entry.getValue().getGittinsIndex()+" "+entry.getValue().getReward();
 			log.fine(_to_str);
 		}
 	}

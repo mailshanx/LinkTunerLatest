@@ -29,11 +29,11 @@ public class GaussBanditParamManager extends BanditParamManager {
 //				_fail_bit_cnt=exploit.getStats(Exploit.GET_RECENT_BIT_CNT);
 //				_success_bit_cnt=0;
 //			}
-			bandit_params.get(bandit_updated_as_str).alpha+=_success_bit_cnt;
-			bandit_params.get(bandit_updated_as_str).beta+=_fail_bit_cnt;
+			bandit_param_list.get(bandit_updated_as_str).alpha+=_success_bit_cnt;
+			bandit_param_list.get(bandit_updated_as_str).beta+=_fail_bit_cnt;
 		}else{
 			//assumption that batch size =1
-			bandit_params.get(bandit_updated_as_str).beta+=8.0*ParamSetter.getPhyParam(ParamSetter.ACTIVE_SCHEME, ParamSetter.PKTLEN);//????
+			bandit_param_list.get(bandit_updated_as_str).beta+=8.0*ParamSetter.getPhyParam(ParamSetter.ACTIVE_SCHEME, ParamSetter.PKTLEN);//????
 		}
 	}
 

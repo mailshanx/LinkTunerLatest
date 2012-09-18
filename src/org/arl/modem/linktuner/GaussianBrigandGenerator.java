@@ -46,7 +46,7 @@ public class GaussianBrigandGenerator implements BrigandGenerable{
 		}
 		sort_by_norm_index=new sortByNormIndex();
 		params_to_be_generated=new LinkedList<String>();
-		Collections.addAll(params_to_be_generated, "DMODE","MPSK","Nc","Np","TX_ATT");		//add params here for future extension
+		Collections.addAll(params_to_be_generated, "DMODE","MPSK","Nc","Np","FEC","TX_ATT");		//add params here for future extension
 		gauss_params_map=new LinkedHashMap<String, GaussianParams>();
 		for(String params : params_to_be_generated){
 			gauss_params_map.put(params, new GaussianParams(params, std_dev_shrink_factor));
@@ -138,10 +138,10 @@ public class GaussianBrigandGenerator implements BrigandGenerable{
 			_bandit=_local_play_record.bandit.clone();
 			String _bandit_str=StrRepr.strRepr(_bandit);
 			if(!play_hist_map.containsKey(_bandit_str)){
-				_local_play_hist_stats=new LocalPlayHistStats(_bandit, _local_play_record.success, _local_play_record.bandit_params.getNormIndex());
+				_local_play_hist_stats=new LocalPlayHistStats(_bandit, _local_play_record.success, _local_play_record.bandit_params.getGittinsIndex());
 				play_hist_map.put(_bandit_str, _local_play_hist_stats);
 			}else{
-				play_hist_map.get(_bandit_str).updateLocalPlayHistSats(_local_play_record.success, _local_play_record.bandit_params.getNormIndex());
+				play_hist_map.get(_bandit_str).updateLocalPlayHistSats(_local_play_record.success, _local_play_record.bandit_params.getGittinsIndex());
 			}
 		}
 		for(Map.Entry<String, LocalPlayHistStats> entry : play_hist_map.entrySet()){
@@ -237,7 +237,9 @@ class GaussianParams{
 		}else{
 			_interval=(double) mean;
 		}
-		std_dev=_interval / 2.0;
+		std_dev=_interval * 1.0;
+		if(std_dev==0.0)
+			std_dev=1.0;
 		System.out.println("mean = "+mean+" _interval = "+_interval+" std_dev = "+std_dev);
 		//std_dev=std_dev*std_dev_resize_factor;
 	}

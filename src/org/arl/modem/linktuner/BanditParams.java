@@ -1,49 +1,181 @@
 package org.arl.modem.linktuner;
 
-public class BanditParams {
-	protected double alpha;
-	protected double beta;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.logging.*;
+
+public class BanditParams implements Notifiable<BanditParamNtf>{
+	private Logger log;
 	protected double gittinsIndex;
-	protected double normalizedIndex;
+	private double z; 		//measurement for the kalman filter
+	private List<Double> measurement_history;		//the state actually just consists of a list of measurement history
+	private Double codedDataRate;
+	private Double bandit_reward;
+	private int[] bandit;
+	private KalmanFilter kalman_filter;
+	private GittinsIndexGenerator gittins_index_generator;
 	
-	protected BanditParams(){
-		this.alpha=1;
-		this.beta=1;
-		this.gittinsIndex=1.0;			//for alpha=1, beta=1, gittins index = 0.61452
-		this.normalizedIndex=0;
+	public BanditParams(Logger _log, int[] _bandit, Double _coded_data_rate){
+		this.log=_log;
+		this.bandit=_bandit.clone();
+		this.codedDataRate=_coded_data_rate;
+		this.bandit_reward=computeReward(bandit, codedDataRate);
+		gittins_index_generator=new GittinsIndexGenerator();
+		
+		z=0.0;
+		measurement_history=new ArrayList<Double>();
+		measurement_history.add(0.5);				//this is basically our initial state
+		kalman_filter=new KalmanFilter(getMeasurementError(this.bandit));
+		gittinsIndex=gittins_index_generator.gittinsIndex(measurement_history.get(measurement_history.size()-1), kalman_filter, bandit_reward);
+		log.fine(StrRepr.strRepr(bandit)+" "+gittinsIndex+" "+codedDataRate+" "+bandit_reward);
+		//update gittins index here
 	}
-
-	public BanditParams(double alpha, double beta, double gittinsIndex,
-			double normalizedIndex) {
-		super();
-		this.alpha = alpha;
-		this.beta = beta;
-		this.gittinsIndex = gittinsIndex;
-		this.normalizedIndex = normalizedIndex;
+	
+	@Override
+	public void handleLinktunerNotifications(BanditParamNtf ntf) {
+		if(ntf.getNtfSrc().equals(BanditParamManager.NTF_ID)){
+			if(ntf.getMsg().equals(BanditParamManager.BanditParamUpdateMsg)){
+				updateFilterAndMeasurementsAndGittinsIndex(ntf);
+			}else if(ntf.getMsg().equals(BanditParamManager.NormalizeBanditReward)){
+				bandit_reward=bandit_reward/ntf.getMaxReward();
+			}
+		}
 	}
-
-	public Double[] getBanditParams(){
-		Double[] _bandit_params=new Double[4];
-		_bandit_params[0]=alpha;
-		_bandit_params[1]=beta;
-		_bandit_params[2]=gittinsIndex;
-		_bandit_params[3]=normalizedIndex;
-		return _bandit_params.clone();
+	
+	private void updateFilterAndMeasurementsAndGittinsIndex(BanditParamNtf ntf){
+		kalman_filter.performTimeUpdate();
+		z=getMeasurement(ntf);
+		if(z!=-1.0){
+			measurement_history.add(z);				//every time u've added a measurement, ur state has changed, and now u need to update ur gittins index
+			int len=measurement_history.size();
+			if(len>2){
+				kalman_filter.measurementUpdate(measurement_history.get(len-2));	//we update our filter to the second-last measurement, 'coz the index generator
+																					//updates for the latest measurement
+			}
+			gittinsIndex=gittins_index_generator.gittinsIndex(measurement_history.get(measurement_history.size()-1), kalman_filter, bandit_reward);
+		}
 	}
-	public double getAlpha(){
-		return alpha;
+	
+	//return -1.0 if no measurement can be inferred
+	private Double getMeasurement(BanditParamNtf ntf){
+		if(getMeasurementFromRelevantBandit(ntf)!=-1.0){
+			return getMeasurementFromRelevantBandit(ntf);
+		}else if(getMeasurementFromSameBandit(ntf)!=-1.0){
+			return getMeasurementFromSameBandit(ntf);
+		}else{
+			return -1.0;
+		}
 	}
-	public double getBeta(){
-		return beta;
+	
+	//Infers a measurement if the other bandit is the same as this one
+	private Double getMeasurementFromSameBandit(BanditParamNtf ntf){
+		int[] bandit_in_msg=ntf.getBandit().clone();
+		Double _z=-1.0;
+		if(Arrays.equals(bandit_in_msg, this.bandit)){
+			if(!banditIsTestPkt(this.bandit)){		//that means i am a data packet
+				if(!((ntf.NsIncrement+ntf.NfIncrement)==0.0)){
+					_z=ntf.NsIncrement/(ntf.NsIncrement+ntf.NfIncrement);
+				}else{
+					_z=0.0;
+				}
+			}else{								//i am a test packet!
+				_z=0.0;							//we can just assume that a test packet has pretty much no chance of success at a packet level,
+												// coz it uses no FEC coding
+			}
+		}
+		return _z;
 	}
+	
+	private Double getMeasurementFromRelevantBandit(BanditParamNtf ntf){
+		int[] bandit_in_msg=ntf.getBandit().clone();
+		Double _z=-1.0;
+		if(!Arrays.equals(bandit_in_msg, this.bandit)){
+			Boolean bandit_in_msg_is_similar=true;					//they are similar if all params except the FEC are the same
+			for(String param:ParamSetter.Scheme_Params_map_keylist){
+				if(!param.equals("FEC")){
+					int param_index=ParamSetter.Scheme_Params_map_keylist.indexOf(param);
+					if(bandit[param_index]!=bandit_in_msg[param_index]){
+						bandit_in_msg_is_similar=false;
+						break;
+					}
+				}
+			}
+			if(bandit_in_msg_is_similar){
+				if(banditIsTestPkt(this.bandit)){	//i am a test packet, doomed to failure!
+					_z=0.0;
+				}else{											//i am a data packet
+					if(!banditIsTestPkt(bandit_in_msg)){		//other bandit is a data packet too!
+						int fec_index=ParamSetter.Scheme_Params_map_keylist.indexOf("FEC");
+						Integer my_fec=ParamSetter.Scheme_Params_values_list.get(fec_index).get(this.bandit[fec_index]);
+						Integer other_fec=ParamSetter.Scheme_Params_values_list.get(fec_index).get(bandit_in_msg[fec_index]);
+						Double my_code_rate=ParamSetter.FEC_mask_to_coderate_mapping.get(my_fec);
+						Double other_code_rate=ParamSetter.FEC_mask_to_coderate_mapping.get(other_fec);
+						Double other_z=0.0;
+						if(!((ntf.NsIncrement+ntf.NfIncrement)==0.0)){
+							other_z=ntf.NsIncrement/(ntf.NsIncrement+ntf.NfIncrement);
+						}else{
+							other_z=0.0;
+						}
+						if(other_z>=0.5 && my_code_rate<other_code_rate){	//other bandit was a success and my code rate is lower, so i shud succeed too
+							_z=1.0;
+						}else if(other_z<0.5 && my_code_rate>other_code_rate){	//other bandit failed, and my code rate is greater, so i'll fail too
+							_z=0.0;
+						}
+					}else{										//other bandit is a test packet
+						int fec_index=ParamSetter.Scheme_Params_map_keylist.indexOf("FEC");
+						Integer my_fec=ParamSetter.Scheme_Params_values_list.get(fec_index).get(this.bandit[fec_index]);
+						Double my_code_rate=ParamSetter.FEC_mask_to_coderate_mapping.get(my_fec);
+						Double other_ber=0.5;
+						if(!((ntf.BsIncrement+ntf.BfIncrement)==0.0)){
+							other_ber=ntf.BfIncrement/(ntf.BsIncrement+ntf.BfIncrement);
+						}
+						new FECPenalty();
+						Double max_possible_coderate=FECPenalty.getCodeRate(other_ber);
+						if(my_code_rate<max_possible_coderate){			//i have adequete coding to overcome this amount of BER
+							_z=1.0;
+						}else{
+							_z=0.0;
+						}
+					}
+				}
+			}
+		}
+		return _z;
+	}
+	
+	private Double computeReward(int[] _bandit, Double _coded_data_rate){
+		if(banditIsTestPkt(_bandit)){
+			return 0.001;			//very small reward to stave off divide-by-zero errors
+		}else{
+			return _coded_data_rate;
+		}
+	}
+	
+	public Double getReward(){
+		return bandit_reward;
+	}
+	
 	public double getGittinsIndex(){
 		return gittinsIndex;
 	}
-	public double getNormIndex(){
-		return normalizedIndex;
+	private Double getMeasurementError(int[] _bandit){
+		int _fec_index = ParamSetter.Scheme_Params_map_keylist.indexOf("FEC");
+		int fec = ParamSetter.Scheme_Params_values_list.get(_fec_index).get(_bandit[_fec_index]);
+		if(fec==0){
+			return 1.0;		//testpacket
+		}else{
+			return 5.0;		//data packet
+		}
+	}
+	private Boolean banditIsTestPkt(int[] _bandit){
+		int _fec_index = ParamSetter.Scheme_Params_map_keylist.indexOf("FEC");
+		int fec = ParamSetter.Scheme_Params_values_list.get(_fec_index).get(_bandit[_fec_index]);
+		if(fec==0){
+			return true;
+		}else{
+			return false;
+		}
 	}
 	
-	public String toString(){
-		return new String(alpha+" "+beta+" "+gittinsIndex+" "+normalizedIndex);
-	}
 }

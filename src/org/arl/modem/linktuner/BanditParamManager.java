@@ -1,10 +1,6 @@
 package org.arl.modem.linktuner;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.logging.*;
 
@@ -12,186 +8,106 @@ import java.util.logging.*;
 public class BanditParamManager {
 	private Logger log;
 	protected Exploit exploit;
-	protected Map<String, BanditParams> bandit_params;
-	private BanditIndices bandit_indices;
+	protected Map<String, BanditParams> bandit_param_collection;
 	private int[][] brigands;
-	private List<int[]> prev_brigands_list;
-	private Map<String, DataRateInfo> rel_data_rates;
 	private BanditParamStatusPrinter bandit_param_status_printer;
+	public final static String NTF_ID="BanditParamManagerNtfId";
+	public final static String BanditParamUpdateMsg="please_update_bandit_params";
+	public final static String NormalizeBanditReward="please_normalize_bandit_reward";
+	
 	public BanditParamManager(Exploit _exploit, Logger _log, int[][] _brigands){
 		this.exploit=_exploit; 
 		this.log = _log;
 		this.brigands=_brigands;
-		this.prev_brigands_list=Arrays.asList(brigands);
-		this.bandit_params= new LinkedHashMap<String, BanditParams>(brigands.length);
-		this.bandit_indices=new BanditIndices();
-		this.rel_data_rates=new LinkedHashMap<String, DataRateInfo>(brigands.length);
+		this.bandit_param_collection=new LinkedHashMap<String, BanditParams>(brigands.length);
 		hardResetBanditParams(brigands);
-//		printRelDataRates();
-		this.bandit_param_status_printer = new BanditParamStatusPrinter(bandit_params, log);			
+		this.bandit_param_status_printer = new BanditParamStatusPrinter(bandit_param_collection, log);			
 	}
 	
-	public void updateBanditParams(int[][] _brigands,int banditCurrent){
+	public void updateBanditParams(int[][] _brigands, int banditCurrent){
 		brigands=_brigands;
 		int[] bandit_updated=brigands[banditCurrent];
 		String bandit_updated_as_str=StrRepr.strRepr(bandit_updated);
-		updateBanditParamsAlphaBeta(bandit_updated);
-		updateRelDataRates(bandit_updated, exploit.getStats(Exploit.GET_RECENT_BER));
-		if(!bandit_params.containsKey(bandit_updated_as_str)){
+		//code to update the new bandit version
+		int _fec_index=ParamSetter.Scheme_Params_map_keylist.indexOf("FEC");
+		int fec = ParamSetter.Scheme_Params_values_list.get(_fec_index).get(bandit_updated[_fec_index]);
+		double _Ns_incr=0.0, _Nf_incr=0.0, _Bs_incr=0.0, _Bf_incr=0.0;
+		if(fec==0){ //test packet
+			double _bit_cnt=exploit.getStats(Exploit.GET_RECENT_BIT_CNT);
+			double _fail_bit_cnt=exploit.getStats(Exploit.GET_RECENT_ERROR_CNT);
+			double _success_bit_cnt=_bit_cnt-_fail_bit_cnt;
+			_Bs_incr= _success_bit_cnt;
+			_Bf_incr= _fail_bit_cnt;
+		}else{		//data packet
+			if (exploit.getStats(Exploit.GET_RECENT_ERROR_CNT)>0.0 || exploit.getStats(Exploit.GET_RECENT_RX_TESTPKT_CNT)==0.0) {
+				_Nf_incr= exploit.getStats(Exploit.GET_RECENT_RX_TESTPKT_CNT);
+			}else if (exploit.getStats(Exploit.GET_RECENT_ERROR_CNT)==0.0 && exploit.getStats(Exploit.GET_RECENT_RX_TESTPKT_CNT)>0) {
+				_Ns_incr= exploit.getStats(Exploit.GET_RECENT_RX_TESTPKT_CNT);
+			}
+		}
+		for(BanditParams _bandit_params:bandit_param_collection.values()){
+			_bandit_params.handleLinktunerNotifications(new BanditParamNtf(NTF_ID, BanditParamUpdateMsg,
+														bandit_updated, _Bs_incr, _Bf_incr, _Ns_incr, _Nf_incr));
+		}
+		if(!bandit_param_collection.containsKey(bandit_updated_as_str)){
 			throw new RuntimeException("bandit_params does not contain params for bandit "+bandit_updated_as_str);
 		}
-		bandit_params.get(bandit_updated_as_str).gittinsIndex=bandit_indices.gittinsIndex(bandit_params.get(bandit_updated_as_str).alpha,
-																						bandit_params.get(bandit_updated_as_str).beta, 0.75);
-//		bandit_params.get(bandit_updated_as_str).normalizedIndex=bandit_params.get(bandit_updated_as_str).gittinsIndex*rel_data_rates.get(bandit_updated_as_str).rel_data_rate;
-//experimental change:
-		for(int[] _bandit : brigands){
-			bandit_updated_as_str=StrRepr.strRepr(_bandit);
-			bandit_params.get(bandit_updated_as_str).normalizedIndex= (1.0*rel_data_rates.get(bandit_updated_as_str).rel_data_rate)
-																		*(1.0*bandit_params.get(bandit_updated_as_str).gittinsIndex);
-		}
-		log.fine("bandit_params["+bandit_updated_as_str+"].alpha = " + bandit_params.get(bandit_updated_as_str).alpha +
-				" bandit_params["+bandit_updated_as_str+"].beta = " + bandit_params.get(bandit_updated_as_str).beta);
-		log.fine("bandit_params["+bandit_updated_as_str+"].gittinsIndex = " + bandit_params.get(bandit_updated_as_str).gittinsIndex +
-				" bandit_params["+bandit_updated_as_str+"].normalizedIndex = " + bandit_params.get(bandit_updated_as_str).normalizedIndex);
-//		printRelDataRates();
-	}
-	
-	protected void updateBanditParamsAlphaBeta(int[] _bandit_updated){
-		String bandit_updated_as_str=StrRepr.strRepr(_bandit_updated);
-		if (exploit.getStats(Exploit.GET_RECENT_ERROR_CNT)>0.0 || exploit.getStats(Exploit.GET_RECENT_RX_TESTPKT_CNT)==0.0) {
-			bandit_params.get(bandit_updated_as_str).beta++;
-		}else if(exploit.getStats(Exploit.GET_RECENT_RX_TESTPKT_CNT)>0.0){ //need to check this condition 'coz sometimes u may get RxTestPktCnt=0
-			bandit_params.get(bandit_updated_as_str).alpha++;
-		}
-	}
-	
-	//will update brigand list only if its different
-	private void updateBrigandList(int[][] _brigands){
-		ArrayList<int[]> _brigands_as_list= new ArrayList<int[]>(Arrays.asList(_brigands));
-//		log.fine("size of brigands_as_list : "+_brigands_as_list.size()+"_brigands_as_list : "+StrRepr.strRepr(_brigands_as_list.toArray(new int[0][0])));
-//		log.fine("prev_brigands_list: (size = "+prev_brigands_list.size()+")");
-//		log.fine(""+ StrRepr.strRepr(prev_brigands_list.toArray(new int[0][0])) );
-		Boolean _test=true;
-		int i=0;
-		while(_test && i < _brigands_as_list.size() && i < prev_brigands_list.size()){
-			_test=(prev_brigands_list.get(i)==_brigands_as_list.get(i));
-			i++;
-		}
-		_test = (_test && (_brigands_as_list.size()==prev_brigands_list.size()));
-		_test=_brigands_as_list.equals(prev_brigands_list);
-		if(!_test){
-			prev_brigands_list=new ArrayList<int[]>(Arrays.asList(brigands));
-			brigands=_brigands;				
-		}
-//		log.fine("_brigands_as_list.size() : "+_brigands_as_list.size());
-//		log.fine("prev_brigands_list.size() : "+prev_brigands_list.size());
-//		log.fine("_test = "+_test);
-//		log.fine("prev_brigands_list : "+StrRepr.strRepr(prev_brigands_list));
-//		log.fine("brigands : "+StrRepr.strRepr(brigands));
 	}
 	public void hardResetBanditParams(int[][] _brigands){
-		ArrayList<int[]> _brigands_as_list;
-		updateBrigandList(_brigands);		
-		bandit_indices=new BanditIndices();		
+		brigands=_brigands.clone();
 		log.fine("hard-reset of bandit_params");
-		bandit_params=new LinkedHashMap<String, BanditParams>(brigands.length);
-		resetRelDataRates(brigands);
-		log.fine("after resetRelDataRates");
-		for (int i = 0; i < brigands.length; i++) {
-			int[] _bandit=brigands[i].clone();
+		//code to hard reset newer bandit version
+		bandit_param_collection=new LinkedHashMap<String, BanditParams>(brigands.length);
+		for(int[] _bandit:brigands){
 			String _bandit_str=StrRepr.strRepr(_bandit);
-			bandit_params.put(_bandit_str, new BanditParams());
-			bandit_params.get(_bandit_str).normalizedIndex=bandit_params.get(_bandit_str).gittinsIndex*rel_data_rates.get(_bandit_str).rel_data_rate;
+			bandit_param_collection.put(_bandit_str, new BanditParams(this.log,_bandit, getCodedDataRate(_bandit)));
 		}
-		if(!(brigands.length==bandit_params.size())){
-			throw new RuntimeException("size mismatch: brigands.length = "+brigands.length+", bandit_params.size() = "+bandit_params.size());
+		if(!(brigands.length==bandit_param_collection.size())){
+			throw new RuntimeException("size mismatch. brigands.length = "
+										+brigands.length+" newer_bandit_param_list.size() = "+bandit_param_collection.size());
 		}
+		normalizeBanditRewards();
 	}
 	public void softResetBanditParams(int[][] _brigands){
-		updateBrigandList(_brigands);
-		ArrayList<int[]> _brigands_as_list=new ArrayList<int[]>(Arrays.asList(brigands));
+		brigands=_brigands.clone();
 		log.fine("soft reset of bandit_params");
-		updateRelDataRates(brigands);
-		for(int[] _bandit: _brigands_as_list){
+		//code to soft update new version of bandits
+		for(int[] _bandit:brigands){
 			String _bandit_str=StrRepr.strRepr(_bandit);
-			if(!bandit_params.containsKey(_bandit_str)){
-				bandit_params.put(_bandit_str, new BanditParams());
-				bandit_params.get(_bandit_str).normalizedIndex=bandit_params.get(_bandit_str).gittinsIndex*rel_data_rates.get(_bandit_str).rel_data_rate;
+			if(!bandit_param_collection.containsKey(_bandit_str)){
+				bandit_param_collection.put(_bandit_str, new BanditParams(this.log, _bandit, getCodedDataRate(_bandit)));
 			}
 		}
-//	log.fine("brigands.length = "+brigands.length+", bandit_params.size() = "+bandit_params.size());
-	if(!(brigands.length==bandit_params.size())){
-		throw new RuntimeException("size mismatch: brigands.length = "+brigands.length+", bandit_params.size() = "+bandit_params.size());
-	}
-	log.fine("completed softResetBanditParams");	
-	}
-	
-	private void resetRelDataRates(int[][] _brigands){
-		rel_data_rates = new LinkedHashMap<String, BanditParamManager.DataRateInfo>(_brigands.length);
-		for(int[] _bandit : _brigands){
-			String _bandit_str = StrRepr.strRepr(_bandit);
-			rel_data_rates.put(_bandit_str, new DataRateInfo());
-			rel_data_rates.get(_bandit_str).abs_data_rate = getCodedDataRate(_bandit);
+		if(!(brigands.length==bandit_param_collection.size())){
+			throw new RuntimeException("size mismatch. brigands.length = "
+										+brigands.length+" newer_bandit_param_list.size() = "+bandit_param_collection.size());
 		}
-		normalizeRelDataRates();
+		normalizeBanditRewards();	
 	}
 	
-	private void updateRelDataRates(int[][] _brigands){
-		for(int[] _bandit : _brigands){
-			String _bandit_str = StrRepr.strRepr(_bandit);
-			if(!rel_data_rates.containsKey(_bandit_str)){
-				rel_data_rates.put(_bandit_str, new DataRateInfo());
-				rel_data_rates.get(_bandit_str).abs_data_rate=getCodedDataRate(_bandit);
+	private void normalizeBanditRewards(){
+		Double max_reward=0.0;
+		for(BanditParams bandit_params:bandit_param_collection.values()){
+			if(bandit_params.getReward()>max_reward){
+				max_reward=bandit_params.getReward();
 			}
 		}
-		normalizeRelDataRates();
-	}
-	
-	private void updateRelDataRates(int[] _bandit, Double BER){
-		String _bandit_str=StrRepr.strRepr(_bandit);
-		new FECPenalty();
-		rel_data_rates.get(_bandit_str).abs_data_rate=getCodedDataRate(_bandit, BER);
-		normalizeRelDataRates();
-	}
-	
-	private void normalizeRelDataRates(){
-		Double _max_data_rate=0.0;
-		for(Map.Entry<String, DataRateInfo> entry : rel_data_rates.entrySet()){
-			if(entry.getValue().abs_data_rate > _max_data_rate){
-				_max_data_rate = entry.getValue().abs_data_rate;
-			}
+		for(BanditParams bandit_params:bandit_param_collection.values()){ 
+			bandit_params.handleLinktunerNotifications(new BanditParamNtf(NTF_ID, NormalizeBanditReward, max_reward));
 		}
-		for(Map.Entry<String, DataRateInfo> entry : rel_data_rates.entrySet()){
-			entry.getValue().rel_data_rate = entry.getValue().abs_data_rate / _max_data_rate;
-		}		
 	}
+	
 	
 	//assumes optimistic code rate in absence of BER information
 	private Double getCodedDataRate(int[] _bandit){
 		Double _data_rate = absDataRate(_bandit);
 		int _fec_index=ParamSetter.Scheme_Params_map_keylist.indexOf("FEC");
-		int _bandit_fec=_bandit[_fec_index];
+		int _bandit_fec=ParamSetter.Scheme_Params_values_list.get(_fec_index).get(_bandit[_fec_index]);
 		if(_bandit_fec==0){	//if FEC is off
 			new FECPenalty();
 			return _data_rate*FECPenalty.getCodeRateEstimate();
 		}else{
 			return _data_rate;
-		}
-	}
-
-	private Double getCodedDataRate(int[] _bandit, Double _BER) {
-		int _fec_index=ParamSetter.Scheme_Params_map_keylist.indexOf("FEC");
-		int _bandit_fec=_bandit[_fec_index];
-		//fec=0 indicates test packet, non-zero fec indicates a data packet
-		if(_bandit_fec==0){
-			Double _data_rate=absDataRate(_bandit);
-			return _data_rate*FECPenalty.getCodeRate(_BER);
-		}else{
-			if(_BER==0.0){
-				return absDataRate(_bandit);
-			}else{
-				return 0.0;
-			}
 		}
 	}
 	
@@ -233,31 +149,24 @@ public class BanditParamManager {
 		BanditParams[] bandit_params=(BanditParams[]) _bandit_params.values().toArray(new BanditParams[_bandit_params.size()]);
 		double[] maxValueIndex={0,0};
 		for (int i = 0; i < bandit_params.length; i++) {
-			if(bandit_params[i].normalizedIndex>maxValueIndex[0]){
-				maxValueIndex[0]=bandit_params[i].normalizedIndex;
+			if(bandit_params[i].getGittinsIndex()>maxValueIndex[0]){
+				maxValueIndex[0]=bandit_params[i].getGittinsIndex();
 				maxValueIndex[1]=i;
 			}
 		}
 		return maxValueIndex;
 	}
 	public int getBestBanditID(){
-		return (int)findMaxValueIndex(bandit_params)[1];
+		return (int)findMaxValueIndex(bandit_param_collection)[1];
 	}
 	public double getBestBanditNormalizedIndex(){
-		return findMaxValueIndex(bandit_params)[0];
+		return findMaxValueIndex(bandit_param_collection)[0];
 	}
 	public void printBanditParamStatus(){
-		bandit_param_status_printer.printBanditParamsStatus(bandit_params);
+		bandit_param_status_printer.printBanditParamsStatus(bandit_param_collection);
 	}
 	public BanditParams getBanditParams(String _bandit_str){
-		return bandit_params.get(_bandit_str);
-	}
-	class DataRateInfo{
-		Double abs_data_rate=-1.0;
-		Double rel_data_rate=-1.0;
-		public String toString(){
-			return new String(abs_data_rate.toString()+" "+rel_data_rate.toString());
-		}
+		return bandit_param_collection.get(_bandit_str);
 	}
 	
 }
