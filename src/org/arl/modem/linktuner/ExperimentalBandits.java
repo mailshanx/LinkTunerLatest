@@ -12,18 +12,18 @@ import org.arl.modem.FAPIMessage;
  public class ExperimentalBandits extends ExperimentTemplate implements Notifiable<LinktunerNotifications> {
 	 									   //  MTYPE   DMODE   MPSK    NC       NP   	Nz   PKTLEN    FEC     TX-ATT
 	public final static int brigands_init[][]={ 
-												{1,		1,		1,		4,		32,		0,		1,		1,		22},    //Coherent,	freq,	QPSK,	Nc=1024,	Np=512,		TX_ATT(=36),		Pktlen=48,		full coding. 	duration=?				
-												{1,		1,		1,		3,		32,		0,		1,		1,		22},	   //Coherent,	freq,	QPSK,	Nc=512, 	Np=256,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?
-												{1,		0,		1,		0,		32,		0,		1,		1,		22},	   //Coherent,	time,	QPSK,	Nc=64,		Np=32,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?	
-												{1,		0,		1,		1,		32,		0,		1,		1,		22},	   //Coherent,	time,	QPSK,	Nc=128,		Np=64,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?
-												{1,		1,		0,		4,		32,		0,		1,		1,		22},    //Coherent,	freq,	BPSK,	Nc=1024,	Np=512,		TX_ATT(=36),		Pktlen=48,		full coding. 	duration=?				
-												{1,		1,		0,		3,		32,		0,		1,		1,		22},	   //Coherent,	freq,	BPSK,	Nc=512, 	Np=256,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?
-												{1,		0,		0,		0,		32,		0,		1,		1,		22},	   //Coherent,	time,	BPSK,	Nc=64,		Np=32,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?	
-												{1,		0,		0,		1,		32,		0,		1,		1,		22},	   //Coherent,	time,	BPSK,	Nc=128,		Np=64,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?
-												{1,		0,		1,		3,		32,		0,		1,		1,		22},
-												{1,		0,		1,		2,		32,		0,		1,		1,		22},
+												{1,		1,		1,		4,		32,		0,		1,		0,		22},    //Coherent,	freq,	QPSK,	Nc=1024,	Np=512,		TX_ATT(=36),		Pktlen=48,		full coding. 	duration=?				
+												{1,		1,		1,		3,		32,		0,		1,		0,		22},	   //Coherent,	freq,	QPSK,	Nc=512, 	Np=256,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?
+												{1,		0,		1,		0,		32,		0,		1,		0,		22},	   //Coherent,	time,	QPSK,	Nc=64,		Np=32,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?	
+												{1,		0,		1,		1,		32,		0,		1,		0,		22},	   //Coherent,	time,	QPSK,	Nc=128,		Np=64,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?
+												{1,		1,		0,		4,		32,		0,		1,		0,		22},    //Coherent,	freq,	BPSK,	Nc=1024,	Np=512,		TX_ATT(=36),		Pktlen=48,		full coding. 	duration=?				
+												{1,		1,		0,		3,		32,		0,		1,		0,		22},	   //Coherent,	freq,	BPSK,	Nc=512, 	Np=256,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?
+												{1,		0,		0,		0,		32,		0,		1,		0,		22},	   //Coherent,	time,	BPSK,	Nc=64,		Np=32,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?	
+												{1,		0,		0,		1,		32,		0,		1,		0,		22},	   //Coherent,	time,	BPSK,	Nc=128,		Np=64,		TX_ATT(=36),		Pktlen=48,		full coding.	duration=?
+												{1,		0,		1,		3,		32,		0,		1,		0,		22},
+												{1,		0,		1,		2,		32,		0,		1,		0,		22},
 												
-												{0,		0,		1,		1,		16,		0,		1,		1,		22},
+												{0,		0,		1,		1,		16,		0,		1,		0,		22},
 												};
 	
 	public static int brigands[][]=brigands_init.clone();
@@ -101,7 +101,7 @@ import org.arl.modem.FAPIMessage;
 			ENABLE_CALLBACK=true;
 			log.fine("brigand 1 ======== "+StrRepr.strRepr(brigands[1]));
 			bandit_param_manager.printBanditParamStatus();
-			beginActiveTuning(35);
+			beginActiveTuning(70);
 		}
 	}
 	
@@ -141,7 +141,7 @@ import org.arl.modem.FAPIMessage;
 		}
 		bandit_param_manager.updateBanditParams(brigands, banditCurrent);
 		gauss_bandit_history_tracker.updateHistory(brigands, banditCurrent, bandit_param_manager.getBanditParams(StrRepr.strRepr(brigands[banditCurrent])));
-//		bandit_param_manager.printBanditParamStatus();
+		bandit_param_manager.printBanditParamStatus();
 		gauss_bandit_history_tracker.printLatestHistory();
 		if (!EXPERIMENT_COMPLETED && !LOCAL_EXPERIMENT_COMPLETED) {
 			log.fine("calling runExperiment(INITIATE_EXPERIMENTS) ");

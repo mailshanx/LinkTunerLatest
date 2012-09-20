@@ -46,7 +46,7 @@ public class GaussianBrigandGenerator implements BrigandGenerable{
 		}
 		sort_by_norm_index=new sortByNormIndex();
 		params_to_be_generated=new LinkedList<String>();
-		Collections.addAll(params_to_be_generated, "DMODE","MPSK","Nc","Np","FEC","TX_ATT");		//add params here for future extension
+		Collections.addAll(params_to_be_generated, "DMODE","MPSK","Nc","Np","TX_ATT");		//add params here for future extension
 		gauss_params_map=new LinkedHashMap<String, GaussianParams>();
 		for(String params : params_to_be_generated){
 			gauss_params_map.put(params, new GaussianParams(params, std_dev_shrink_factor));
@@ -212,7 +212,9 @@ class GaussianParams{
 	private Integer mean;
 	private Double std_dev;
 	private Double std_dev_resize_factor;
-	public GaussianParams(String param, Double _std_dev_resize_factor){
+	private String param;
+	public GaussianParams(String _param, Double _std_dev_resize_factor){
+		this.param=_param;
 		int _index = ParamSetter.Scheme_Params_map_keylist.indexOf(param);
 		std_dev_resize_factor=_std_dev_resize_factor;
 		assert(_index>=0);
@@ -237,9 +239,12 @@ class GaussianParams{
 		}else{
 			_interval=(double) mean;
 		}
-		std_dev=_interval * 1.0;
+		std_dev=_interval / 2.0;
+		if(param.equals("Np")){
+			std_dev=_interval;		//explore more in Np domain
+		}
 		if(std_dev==0.0)
-			std_dev=1.0;
+			std_dev=0.5;
 		System.out.println("mean = "+mean+" _interval = "+_interval+" std_dev = "+std_dev);
 		//std_dev=std_dev*std_dev_resize_factor;
 	}

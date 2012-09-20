@@ -10,25 +10,27 @@ public class BanditParams implements Notifiable<BanditParamNtf>{
 	protected double gittinsIndex;
 	private double z; 		//measurement for the kalman filter
 	private List<Double> measurement_history;		//the state actually just consists of a list of measurement history
-	private Double codedDataRate;
-	private Double bandit_reward;
+	private Double absoluteDataRate;
+	private Double abs_bandit_reward;
+	private Double normalized_bandit_reward;
 	private int[] bandit;
 	private KalmanFilter kalman_filter;
 	private GittinsIndexGenerator gittins_index_generator;
 	
-	public BanditParams(Logger _log, int[] _bandit, Double _coded_data_rate){
+	public BanditParams(Logger _log, int[] _bandit, Double _abs_data_rate){
 		this.log=_log;
 		this.bandit=_bandit.clone();
-		this.codedDataRate=_coded_data_rate;
-		this.bandit_reward=computeReward(bandit, codedDataRate);
+		this.absoluteDataRate=_abs_data_rate;
+		this.abs_bandit_reward=computeReward(absoluteDataRate);
+		normalized_bandit_reward=abs_bandit_reward;
 		gittins_index_generator=new GittinsIndexGenerator();
 		
 		z=0.0;
 		measurement_history=new ArrayList<Double>();
 		measurement_history.add(0.5);				//this is basically our initial state
 		kalman_filter=new KalmanFilter(getMeasurementError(this.bandit));
-		gittinsIndex=gittins_index_generator.gittinsIndex(measurement_history.get(measurement_history.size()-1), kalman_filter, bandit_reward);
-		log.fine(StrRepr.strRepr(bandit)+" "+gittinsIndex+" "+codedDataRate+" "+bandit_reward);
+		gittinsIndex=gittins_index_generator.gittinsIndex(measurement_history.get(measurement_history.size()-1), kalman_filter, normalized_bandit_reward);
+		log.fine(StrRepr.strRepr(bandit)+" "+gittinsIndex+" "+absoluteDataRate+" "+abs_bandit_reward);
 		//update gittins index here
 	}
 	
@@ -37,35 +39,37 @@ public class BanditParams implements Notifiable<BanditParamNtf>{
 		if(ntf.getNtfSrc().equals(BanditParamManager.NTF_ID)){
 			if(ntf.getMsg().equals(BanditParamManager.BanditParamUpdateMsg)){
 				updateFilterAndMeasurementsAndGittinsIndex(ntf);
-			}else if(ntf.getMsg().equals(BanditParamManager.NormalizeBanditReward)){
-				bandit_reward=bandit_reward/ntf.getMaxReward();
+			}else if(ntf.getMsg().equals(BanditParamManager.NormalizeBanditParams)){
+				this.normalized_bandit_reward=abs_bandit_reward/ntf.getMaxReward();
+				this.gittinsIndex=gittins_index_generator.gittinsIndex(measurement_history.get(measurement_history.size()-1), kalman_filter, normalized_bandit_reward);
 			}
 		}
 	}
 	
+	//update filter, followed by reward and finally gittins index in that order
 	private void updateFilterAndMeasurementsAndGittinsIndex(BanditParamNtf ntf){
 		kalman_filter.performTimeUpdate();
 		z=getMeasurement(ntf);
 		if(z!=-1.0){
 			measurement_history.add(z);				//every time u've added a measurement, ur state has changed, and now u need to update ur gittins index
 			int len=measurement_history.size();
-			if(len>2){
-				kalman_filter.measurementUpdate(measurement_history.get(len-2));	//we update our filter to the second-last measurement, 'coz the index generator
-																					//updates for the latest measurement
-			}
-			gittinsIndex=gittins_index_generator.gittinsIndex(measurement_history.get(measurement_history.size()-1), kalman_filter, bandit_reward);
+			kalman_filter.measurementUpdate(measurement_history.get(len-1));	//we update our filter to the second-last measurement, 'coz the index generator
+																				//updates for the latest measurement
+			abs_bandit_reward=computeReward(absoluteDataRate, (1.0-kalman_filter.getEstimate()));
+			gittinsIndex=gittins_index_generator.gittinsIndex(measurement_history.get(len-1), kalman_filter, normalized_bandit_reward);
 		}
 	}
 	
 	//return -1.0 if no measurement can be inferred
 	private Double getMeasurement(BanditParamNtf ntf){
-		if(getMeasurementFromRelevantBandit(ntf)!=-1.0){
-			return getMeasurementFromRelevantBandit(ntf);
+		if(getMeasurementFromRelevantBandit(ntf)!=-1.0){		//measurements from similar bandits are disabled
+//			return getMeasurementFromRelevantBandit(ntf);
 		}else if(getMeasurementFromSameBandit(ntf)!=-1.0){
 			return getMeasurementFromSameBandit(ntf);
 		}else{
 			return -1.0;
 		}
+		return -1.0;
 	}
 	
 	//Infers a measurement if the other bandit is the same as this one
@@ -80,8 +84,8 @@ public class BanditParams implements Notifiable<BanditParamNtf>{
 					_z=0.0;
 				}
 			}else{								//i am a test packet!
-				_z=0.0;							//we can just assume that a test packet has pretty much no chance of success at a packet level,
-												// coz it uses no FEC coding
+				_z=ntf.BsIncrement/(ntf.BsIncrement+ntf.BfIncrement);							//we can just assume that a test packet has pretty much no chance of success at a packet level,
+																								// coz it uses no FEC coding??? for now, no
 			}
 		}
 		return _z;
@@ -144,18 +148,27 @@ public class BanditParams implements Notifiable<BanditParamNtf>{
 		return _z;
 	}
 	
-	private Double computeReward(int[] _bandit, Double _coded_data_rate){
-		if(banditIsTestPkt(_bandit)){
-			return 0.001;			//very small reward to stave off divide-by-zero errors
-		}else{
-			return _coded_data_rate;
-		}
+	private Double computeReward(Double _abs_data_rate){
+		new FECPenalty();
+		return _abs_data_rate*FECPenalty.getCodeRateEstimate();
 	}
 	
-	public Double getReward(){
-		return bandit_reward;
+	private Double computeReward(Double _abs_data_rate, Double _ber){
+		new FECPenalty();
+		return _abs_data_rate*FECPenalty.getCodeRate(_ber);	
 	}
-	
+	public Double getAbsDataRate(){
+		return absoluteDataRate;
+	}
+	public Double getAbsReward(){
+		return abs_bandit_reward;
+	}
+	public Double getNormalizedReward(){
+		return normalized_bandit_reward;
+	}
+	public Double getFilterEstimate(){
+		return kalman_filter.getEstimate();
+	}
 	public double getGittinsIndex(){
 		return gittinsIndex;
 	}

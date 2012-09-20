@@ -62,7 +62,7 @@ public class ParamSetter{
 														504,	528,	552,	576,	600,
 														624,	648,	672,	696,	720,
 														744,	768,	792,	816,	840},//PKTLEN
-														{1024,1024},                //FEC:0=none, 1024=conv(rate=1/3) only, 65536=golay only(rate =1/2), 66560=both.
+														{0,1024,65536,66560},                //FEC:0=none, 1024=conv(rate=1/3) only, 65536=golay only(rate =1/2), 66560=both.
 														{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,
 														15,16,17,18,19,20,21,22,23,24,25,26,
 														27,28,29,30,31,32,33,34,35,36}		//TX-ATT: 0=full power, 50=damn low power. If operating at sea, 

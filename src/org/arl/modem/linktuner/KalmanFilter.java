@@ -16,7 +16,7 @@ public class KalmanFilter {
 	private Double gain;
 	public KalmanFilter(Double _R){
 		Q=0.00001;
-		aPrioriEst=0.4;
+		aPrioriEst=1.0;		//we are highly optimistic that the packet will succeed
 		aPosterioriEst=aPrioriEst;
 		stateCov_aPriori=5.0;
 		gain=1.0;

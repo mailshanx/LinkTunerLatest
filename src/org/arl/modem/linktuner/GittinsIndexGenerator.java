@@ -16,18 +16,12 @@ public class GittinsIndexGenerator {
 	Double bandit_reward;
 	Double current_measurement;
 
-	protected double gittinsIndex(Double _measurement, KalmanFilter _filter, double _bandit_reward, double _gamma){
-		this.gamma=_gamma;
-		this.filter=_filter;
-		this.bandit_reward=_bandit_reward;
-		this.current_measurement=_measurement;
-		return indexSearch(upperBound, lowerBound, maxIter);
-	}
-	protected double gittinsIndex(Double _measurement, KalmanFilter _filter, double _bandit_reward){
+
+	protected double gittinsIndex(Double _measurement, KalmanFilter _filter, Double _bandit_reward){
 		this.filter=_filter.getFilterCopy();
 		this.bandit_reward=_bandit_reward;
 		this.current_measurement=_measurement;
-		return indexSearch(upperBound, lowerBound, maxIter);
+		return indexSearch(upperBound, lowerBound, maxIter)*bandit_reward;
 	}
 	private double indexSearch(double upperBound, double lowerBound, int maxIter){
 		double midPoint = 0;
@@ -55,9 +49,9 @@ public class GittinsIndexGenerator {
 		return midPoint;
 	}
 	private double f(double nu){
-		return value_func(current_measurement, filter, nu, n, 1) - (nu/(1-gamma));
+		return value_func(current_measurement, filter, nu, n, 1, false) - (nu/(1-gamma));
 	}
-	private double value_func(Double _measurement, KalmanFilter _filter, double rho, int n, int m){
+	private double value_func(Double _measurement, KalmanFilter _filter, double rho, int n, int m, boolean updateFilter){
 		double v;
 		double p;
 		double v0, v1, ev;
@@ -66,13 +60,15 @@ public class GittinsIndexGenerator {
 		if(n<=0){
 			v=0;
 		}else{
-			my_filter.performTimeUpdate();
-			my_filter.measurementUpdate(current_measurement);
+			if(updateFilter){
+				my_filter.performTimeUpdate();
+				my_filter.measurementUpdate(current_measurement);				
+			}
 			p=my_filter.getEstimate();
-			v0=value_func(0.0, my_filter.getFilterCopy(), rho, n-1, 0);
-			v1=value_func(1.0, my_filter.getFilterCopy(), rho, n-1, 0);
-			ev=(p*bandit_reward) + gamma*(p*v1*bandit_reward + (1-p)*v0);
-//			ev=p + gamma*(p*v1+ (1-p)*v0);
+			v0=value_func(0.0, my_filter.getFilterCopy(), rho, n-1, 0, true);
+			v1=value_func(1.0, my_filter.getFilterCopy(), rho, n-1, 0, true);
+//			ev=(p*bandit_reward) + gamma*(p*v1*bandit_reward + (1-p)*v0);
+			ev=p + gamma*(p*v1+ (1-p)*v0);
 			if(m==1){
 				v=ev;
 			}else{

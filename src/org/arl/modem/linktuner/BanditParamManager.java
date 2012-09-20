@@ -13,7 +13,7 @@ public class BanditParamManager {
 	private BanditParamStatusPrinter bandit_param_status_printer;
 	public final static String NTF_ID="BanditParamManagerNtfId";
 	public final static String BanditParamUpdateMsg="please_update_bandit_params";
-	public final static String NormalizeBanditReward="please_normalize_bandit_reward";
+	public final static String NormalizeBanditParams="please_normalize_bandit_reward_and_index";
 	
 	public BanditParamManager(Exploit _exploit, Logger _log, int[][] _brigands){
 		this.exploit=_exploit; 
@@ -45,10 +45,12 @@ public class BanditParamManager {
 				_Ns_incr= exploit.getStats(Exploit.GET_RECENT_RX_TESTPKT_CNT);
 			}
 		}
+		log.fine(BanditParamUpdateMsg+" "+bandit_updated_as_str+" "+_Bs_incr+" "+_Bf_incr+" "+_Ns_incr+" "+_Nf_incr);
 		for(BanditParams _bandit_params:bandit_param_collection.values()){
 			_bandit_params.handleLinktunerNotifications(new BanditParamNtf(NTF_ID, BanditParamUpdateMsg,
 														bandit_updated, _Bs_incr, _Bf_incr, _Ns_incr, _Nf_incr));
 		}
+		normalizeBanditRewards();
 		if(!bandit_param_collection.containsKey(bandit_updated_as_str)){
 			throw new RuntimeException("bandit_params does not contain params for bandit "+bandit_updated_as_str);
 		}
@@ -60,7 +62,7 @@ public class BanditParamManager {
 		bandit_param_collection=new LinkedHashMap<String, BanditParams>(brigands.length);
 		for(int[] _bandit:brigands){
 			String _bandit_str=StrRepr.strRepr(_bandit);
-			bandit_param_collection.put(_bandit_str, new BanditParams(this.log,_bandit, getCodedDataRate(_bandit)));
+			bandit_param_collection.put(_bandit_str, new BanditParams(this.log,_bandit, absDataRate(_bandit)));
 		}
 		if(!(brigands.length==bandit_param_collection.size())){
 			throw new RuntimeException("size mismatch. brigands.length = "
@@ -75,7 +77,7 @@ public class BanditParamManager {
 		for(int[] _bandit:brigands){
 			String _bandit_str=StrRepr.strRepr(_bandit);
 			if(!bandit_param_collection.containsKey(_bandit_str)){
-				bandit_param_collection.put(_bandit_str, new BanditParams(this.log, _bandit, getCodedDataRate(_bandit)));
+				bandit_param_collection.put(_bandit_str, new BanditParams(this.log, _bandit, absDataRate(_bandit)));
 			}
 		}
 		if(!(brigands.length==bandit_param_collection.size())){
@@ -88,15 +90,15 @@ public class BanditParamManager {
 	private void normalizeBanditRewards(){
 		Double max_reward=0.0;
 		for(BanditParams bandit_params:bandit_param_collection.values()){
-			if(bandit_params.getReward()>max_reward){
-				max_reward=bandit_params.getReward();
+			if(bandit_params.getAbsReward()>max_reward){
+				max_reward=bandit_params.getAbsReward();
 			}
 		}
+		log.fine(NormalizeBanditParams+" "+max_reward);
 		for(BanditParams bandit_params:bandit_param_collection.values()){ 
-			bandit_params.handleLinktunerNotifications(new BanditParamNtf(NTF_ID, NormalizeBanditReward, max_reward));
+			bandit_params.handleLinktunerNotifications(new BanditParamNtf(NTF_ID, NormalizeBanditParams, max_reward));
 		}
 	}
-	
 	
 	//assumes optimistic code rate in absence of BER information
 	private Double getCodedDataRate(int[] _bandit){
